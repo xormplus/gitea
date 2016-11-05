@@ -23,8 +23,10 @@ _testmain.go
 *.test
 *.prof
 
-coverage.out
 gitea
+coverage.out
+templates/bindata.go
+public/bindata.go
 
 *.db
 *.log
