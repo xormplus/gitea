@@ -14,7 +14,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/go-macaron/bindata"
 	"github.com/go-macaron/binding"
 	"github.com/go-macaron/cache"
 	"github.com/go-macaron/captcha"
@@ -32,7 +31,6 @@ import (
 	"github.com/go-gitea/gitea/modules/context"
 	"github.com/go-gitea/gitea/modules/log"
 	"github.com/go-gitea/gitea/modules/setting"
-	"github.com/go-gitea/gitea/modules/template"
 	"github.com/go-gitea/gitea/public"
 	"github.com/go-gitea/gitea/routers"
 	"github.com/go-gitea/gitea/routers/admin"
@@ -77,17 +75,10 @@ func newMacaron() *macaron.Macaron {
 	if setting.Protocol == setting.FCGI {
 		m.SetURLPrefix(setting.AppSubUrl)
 	}
-	m.Use(macaron.Static(
-		"public",
-		macaron.StaticOptions{
+	m.Use(public.Static(
+		&public.Options{
+			Directory:   path.Join(setting.StaticRootPath, "public"),
 			SkipLogging: setting.DisableRouterLog,
-			FileSystem: bindata.Static(bindata.Options{
-				Asset:      public.Asset,
-				AssetDir:   public.AssetDir,
-				AssetInfo:  public.AssetInfo,
-				AssetNames: public.AssetNames,
-				Prefix:     "",
-			}),
 		},
 	))
 	m.Use(macaron.Static(
@@ -98,23 +89,23 @@ func newMacaron() *macaron.Macaron {
 		},
 	))
 
-	templateOptions := bindata.Options{
-		Asset:      templates.Asset,
-		AssetDir:   templates.AssetDir,
-		AssetInfo:  templates.AssetInfo,
-		AssetNames: templates.AssetNames,
-		Prefix:     "",
-	}
+	m.Use(templates.Renderer(
+		&templates.Options{
+			Directory:         path.Join(setting.StaticRootPath, "templates"),
+			AppendDirectories: []string{path.Join(setting.CustomPath, "templates")},
+		},
+	))
 
-	funcMap := template.NewFuncMap()
-	m.Use(macaron.Renderer(macaron.RenderOptions{
-		AppendDirectories:  []string{path.Join(setting.CustomPath, "templates")},
-		Funcs:              funcMap,
-		IndentJSON:         macaron.Env != macaron.PROD,
-		TemplateFileSystem: bindata.Templates(templateOptions),
-	}))
-	models.InitMailRender(templateOptions,
-		path.Join(setting.CustomPath, "templates/mail"), funcMap)
+	// templateOptions := bindata.Options{
+	// 	Asset:      templates.Asset,
+	// 	AssetDir:   templates.AssetDir,
+	// 	AssetInfo:  templates.AssetInfo,
+	// 	AssetNames: templates.AssetNames,
+	// 	Prefix:     "",
+	// }
+
+	// models.InitMailRender(templateOptions,
+	// 	path.Join(setting.CustomPath, "templates/mail"), funcMap)
 
 	localeNames, err := conf.AssetDir("locale")
 	if err != nil {
