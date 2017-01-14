@@ -5,20 +5,22 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 
+	"code.gitea.io/git"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/auth"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/markdown"
 	"github.com/Unknwon/paginater"
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/auth"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/markdown"
 )
 
 const (
-	RELEASES    base.TplName = "repo/release/list"
-	RELEASE_NEW base.TplName = "repo/release/new"
+	tplReleases   base.TplName = "repo/release/list"
+	tplReleaseNew base.TplName = "repo/release/new"
 )
 
 // calReleaseNumCommitsBehind calculates given release has how many commits behind release target.
@@ -49,44 +51,76 @@ func calReleaseNumCommitsBehind(repoCtx *context.Repository, release *models.Rel
 	return nil
 }
 
+// Releases render releases list page
 func Releases(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.release.releases")
 	ctx.Data["PageIsReleaseList"] = true
-
-	rawTags, err := ctx.Repo.GitRepo.GetTags()
-	if err != nil {
-		ctx.Handle(500, "GetTags", err)
-		return
-	}
 
 	page := ctx.QueryInt("page")
 	if page <= 1 {
 		page = 1
 	}
-	releases, err := models.GetReleasesByRepoID(ctx.Repo.Repository.ID, page, 10)
+	limit := ctx.QueryInt("limit")
+	if limit <= 0 {
+		limit = 10
+	}
+
+	rawTags, err := ctx.Repo.GitRepo.GetTagInfos(git.TagOption{})
 	if err != nil {
-		ctx.Handle(500, "GetReleasesByRepoID", err)
+		ctx.Handle(500, "GetTags", err)
+		return
+	}
+
+	if len(rawTags) == 0 {
+		ctx.HTML(200, tplReleases)
+		return
+	}
+
+	if len(rawTags) <= (page-1)*limit {
+		ctx.Handle(500, "Releases", errors.New("no more pages"))
+		return
+	}
+
+	var tags []*git.Tag
+	if page*limit > len(rawTags) {
+		tags = rawTags[(page-1)*limit:]
+	} else {
+		tags = rawTags[(page-1)*limit : page*limit]
+	}
+
+	var tagNames []string
+	for _, t := range tags {
+		tagNames = append(tagNames, t.Name)
+	}
+
+	releases, err := models.GetReleasesByRepoIDAndNames(ctx.Repo.Repository.ID, tagNames)
+	if err != nil {
+		ctx.Handle(500, "GetReleasesByRepoIDAndNames", err)
 		return
 	}
 
 	// Temproray cache commits count of used branches to speed up.
 	countCache := make(map[string]int64)
-
-	tags := make([]*models.Release, len(rawTags))
-	for i, rawTag := range rawTags {
-		for j, r := range releases {
-			if r == nil || (r.IsDraft && !ctx.Repo.IsOwner()) {
+	var cacheUsers = make(map[int64]*models.User)
+	var ok bool
+	releaseTags := make([]*models.Release, len(tags))
+	for i, rawTag := range tags {
+		for _, r := range releases {
+			if r.IsDraft && !ctx.Repo.IsOwner() {
 				continue
 			}
-			if r.TagName == rawTag {
-				r.Publisher, err = models.GetUserByID(r.PublisherID)
-				if err != nil {
-					if models.IsErrUserNotExist(err) {
-						r.Publisher = models.NewGhostUser()
-					} else {
-						ctx.Handle(500, "GetUserByID", err)
-						return
+			if r.TagName == rawTag.Name {
+				if r.Publisher, ok = cacheUsers[r.PublisherID]; !ok {
+					r.Publisher, err = models.GetUserByID(r.PublisherID)
+					if err != nil {
+						if models.IsErrUserNotExist(err) {
+							r.Publisher = models.NewGhostUser()
+						} else {
+							ctx.Handle(500, "GetUserByID", err)
+							return
+						}
 					}
+					cacheUsers[r.PublisherID] = r.Publisher
 				}
 
 				if err := calReleaseNumCommitsBehind(ctx.Repo, r, countCache); err != nil {
@@ -95,82 +129,54 @@ func Releases(ctx *context.Context) {
 				}
 
 				r.Note = markdown.RenderString(r.Note, ctx.Repo.RepoLink, ctx.Repo.Repository.ComposeMetas())
-				tags[i] = r
-				releases[j] = nil // Mark as used.
+				releaseTags[i] = r
 				break
 			}
 		}
 
-		if tags[i] == nil {
-			commit, err := ctx.Repo.GitRepo.GetTagCommit(rawTag)
-			if err != nil {
-				ctx.Handle(500, "GetTagCommit", err)
-				return
+		if releaseTags[i] == nil {
+			releaseTags[i] = &models.Release{
+				Title:   rawTag.Name,
+				TagName: rawTag.Name,
+				Sha1:    rawTag.Object.String(),
+				Note:    rawTag.Message,
 			}
 
-			tags[i] = &models.Release{
-				Title:   rawTag,
-				TagName: rawTag,
-				Sha1:    commit.ID.String(),
-			}
-
-			tags[i].NumCommits, err = commit.CommitsCount()
+			releaseTags[i].NumCommits, err = git.CommitsCount(ctx.Repo.GitRepo.Path, rawTag.Object.String())
 			if err != nil {
 				ctx.Handle(500, "CommitsCount", err)
 				return
 			}
-			tags[i].NumCommitsBehind = ctx.Repo.CommitsCount - tags[i].NumCommits
+			releaseTags[i].NumCommitsBehind = ctx.Repo.CommitsCount - releaseTags[i].NumCommits
 		}
 	}
 
-	for _, r := range releases {
-		if r == nil {
-			continue
-		}
-
-		r.Publisher, err = models.GetUserByID(r.PublisherID)
-		if err != nil {
-			if models.IsErrUserNotExist(err) {
-				r.Publisher = models.NewGhostUser()
-			} else {
-				ctx.Handle(500, "GetUserByID", err)
-				return
-			}
-		}
-
-		if err := calReleaseNumCommitsBehind(ctx.Repo, r, countCache); err != nil {
-			ctx.Handle(500, "calReleaseNumCommitsBehind", err)
-			return
-		}
-
-		r.Note = markdown.RenderString(r.Note, ctx.Repo.RepoLink, ctx.Repo.Repository.ComposeMetas())
-		tags = append(tags, r)
-	}
-	pager := paginater.New(ctx.Repo.Repository.NumTags, 10, page, 5)
+	pager := paginater.New(ctx.Repo.Repository.NumTags, limit, page, 5)
 	ctx.Data["Page"] = pager
-	models.SortReleases(tags)
-	ctx.Data["Releases"] = tags
-	ctx.HTML(200, RELEASES)
+	ctx.Data["Releases"] = releaseTags
+	ctx.HTML(200, tplReleases)
 }
 
+// NewRelease render creating release page
 func NewRelease(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.release.new_release")
 	ctx.Data["PageIsReleaseList"] = true
 	ctx.Data["tag_target"] = ctx.Repo.Repository.DefaultBranch
-	ctx.HTML(200, RELEASE_NEW)
+	ctx.HTML(200, tplReleaseNew)
 }
 
+// NewReleasePost response for creating a release
 func NewReleasePost(ctx *context.Context, form auth.NewReleaseForm) {
 	ctx.Data["Title"] = ctx.Tr("repo.release.new_release")
 	ctx.Data["PageIsReleaseList"] = true
 
 	if ctx.HasError() {
-		ctx.HTML(200, RELEASE_NEW)
+		ctx.HTML(200, tplReleaseNew)
 		return
 	}
 
 	if !ctx.Repo.GitRepo.IsBranchExist(form.Target) {
-		ctx.RenderWithErr(ctx.Tr("form.target_branch_not_exist"), RELEASE_NEW, &form)
+		ctx.RenderWithErr(ctx.Tr("form.target_branch_not_exist"), tplReleaseNew, &form)
 		return
 	}
 
@@ -213,9 +219,9 @@ func NewReleasePost(ctx *context.Context, form auth.NewReleaseForm) {
 		ctx.Data["Err_TagName"] = true
 		switch {
 		case models.IsErrReleaseAlreadyExist(err):
-			ctx.RenderWithErr(ctx.Tr("repo.release.tag_name_already_exist"), RELEASE_NEW, &form)
+			ctx.RenderWithErr(ctx.Tr("repo.release.tag_name_already_exist"), tplReleaseNew, &form)
 		case models.IsErrInvalidTagName(err):
-			ctx.RenderWithErr(ctx.Tr("repo.release.tag_name_invalid"), RELEASE_NEW, &form)
+			ctx.RenderWithErr(ctx.Tr("repo.release.tag_name_invalid"), tplReleaseNew, &form)
 		default:
 			ctx.Handle(500, "CreateRelease", err)
 		}
@@ -226,6 +232,7 @@ func NewReleasePost(ctx *context.Context, form auth.NewReleaseForm) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/releases")
 }
 
+// EditRelease render release edit page
 func EditRelease(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.release.edit_release")
 	ctx.Data["PageIsReleaseList"] = true
@@ -247,10 +254,12 @@ func EditRelease(ctx *context.Context) {
 	ctx.Data["title"] = rel.Title
 	ctx.Data["content"] = rel.Note
 	ctx.Data["prerelease"] = rel.IsPrerelease
+	ctx.Data["IsDraft"] = rel.IsDraft
 
-	ctx.HTML(200, RELEASE_NEW)
+	ctx.HTML(200, tplReleaseNew)
 }
 
+// EditReleasePost response for edit release
 func EditReleasePost(ctx *context.Context, form auth.EditReleaseForm) {
 	ctx.Data["Title"] = ctx.Tr("repo.release.edit_release")
 	ctx.Data["PageIsReleaseList"] = true
@@ -273,7 +282,7 @@ func EditReleasePost(ctx *context.Context, form auth.EditReleaseForm) {
 	ctx.Data["prerelease"] = rel.IsPrerelease
 
 	if ctx.HasError() {
-		ctx.HTML(200, RELEASE_NEW)
+		ctx.HTML(200, tplReleaseNew)
 		return
 	}
 
@@ -288,8 +297,10 @@ func EditReleasePost(ctx *context.Context, form auth.EditReleaseForm) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/releases")
 }
 
+// DeleteRelease delete a release
 func DeleteRelease(ctx *context.Context) {
-	if err := models.DeleteReleaseByID(ctx.QueryInt64("id")); err != nil {
+	delTag := ctx.QueryBool("delTag")
+	if err := models.DeleteReleaseByID(ctx.QueryInt64("id"), ctx.User, delTag); err != nil {
 		ctx.Flash.Error("DeleteReleaseByID: " + err.Error())
 	} else {
 		ctx.Flash.Success(ctx.Tr("repo.release.deletion_success"))

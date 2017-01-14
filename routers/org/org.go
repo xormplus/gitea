@@ -5,28 +5,37 @@
 package org
 
 import (
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/auth"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
+	"errors"
+
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/auth"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
 )
 
 const (
-	CREATE base.TplName = "org/create"
+	// tplCreateOrg template path for create organization
+	tplCreateOrg base.TplName = "org/create"
 )
 
+// Create render the page for create organization
 func Create(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("new_org")
-	ctx.HTML(200, CREATE)
+	if !ctx.User.CanCreateOrganization() {
+		ctx.Handle(500, "Not allowed", errors.New(ctx.Tr("org.form.create_org_not_allowed")))
+		return
+	}
+	ctx.HTML(200, tplCreateOrg)
 }
 
+// CreatePost response for create organization
 func CreatePost(ctx *context.Context, form auth.CreateOrgForm) {
 	ctx.Data["Title"] = ctx.Tr("new_org")
 
 	if ctx.HasError() {
-		ctx.HTML(200, CREATE)
+		ctx.HTML(200, tplCreateOrg)
 		return
 	}
 
@@ -40,11 +49,13 @@ func CreatePost(ctx *context.Context, form auth.CreateOrgForm) {
 		ctx.Data["Err_OrgName"] = true
 		switch {
 		case models.IsErrUserAlreadyExist(err):
-			ctx.RenderWithErr(ctx.Tr("form.org_name_been_taken"), CREATE, &form)
+			ctx.RenderWithErr(ctx.Tr("form.org_name_been_taken"), tplCreateOrg, &form)
 		case models.IsErrNameReserved(err):
-			ctx.RenderWithErr(ctx.Tr("org.form.name_reserved", err.(models.ErrNameReserved).Name), CREATE, &form)
+			ctx.RenderWithErr(ctx.Tr("org.form.name_reserved", err.(models.ErrNameReserved).Name), tplCreateOrg, &form)
 		case models.IsErrNamePatternNotAllowed(err):
-			ctx.RenderWithErr(ctx.Tr("org.form.name_pattern_not_allowed", err.(models.ErrNamePatternNotAllowed).Pattern), CREATE, &form)
+			ctx.RenderWithErr(ctx.Tr("org.form.name_pattern_not_allowed", err.(models.ErrNamePatternNotAllowed).Pattern), tplCreateOrg, &form)
+		case models.IsErrUserNotAllowedCreateOrg(err):
+			ctx.RenderWithErr(ctx.Tr("org.form.create_org_not_allowed"), tplCreateOrg, &form)
 		default:
 			ctx.Handle(500, "CreateOrganization", err)
 		}
@@ -52,5 +63,5 @@ func CreatePost(ctx *context.Context, form auth.CreateOrgForm) {
 	}
 	log.Trace("Organization created: %s", org.Name)
 
-	ctx.Redirect(setting.AppSubUrl + "/org/" + form.OrgName + "/dashboard")
+	ctx.Redirect(setting.AppSubURL + "/org/" + form.OrgName + "/dashboard")
 }

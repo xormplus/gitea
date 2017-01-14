@@ -15,10 +15,10 @@ import (
 
 	"github.com/Unknwon/com"
 
-	"github.com/go-gitea/git"
+	"code.gitea.io/git"
 
-	"github.com/go-gitea/gitea/modules/setting"
-	"github.com/go-gitea/gitea/modules/sync"
+	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/sync"
 )
 
 var wikiWorkingPool = sync.NewExclusivePool()
@@ -33,6 +33,7 @@ func ToWikiPageURL(name string) string {
 // that are not belong to wiki repository.
 func ToWikiPageName(urlString string) string {
 	name, _ := url.QueryUnescape(strings.Replace(urlString, "-", " ", -1))
+	name = strings.Replace(name, "\t", " ", -1)
 	return strings.Replace(strings.TrimLeft(name, "./"), "/", " ", -1)
 }
 
@@ -46,6 +47,7 @@ func WikiPath(userName, repoName string) string {
 	return filepath.Join(UserPath(userName), strings.ToLower(repoName)+".wiki.git")
 }
 
+// WikiPath returns wiki data path for given repository.
 func (repo *Repository) WikiPath() string {
 	return WikiPath(repo.MustOwner().Name, repo.Name)
 }
@@ -70,6 +72,7 @@ func (repo *Repository) InitWiki() error {
 	return nil
 }
 
+// LocalWikiPath returns the path to the local wiki repository (?).
 func (repo *Repository) LocalWikiPath() string {
 	return path.Join(setting.AppDataPath, "tmp/local-wiki", com.ToStr(repo.ID))
 }
@@ -110,7 +113,11 @@ func (repo *Repository) updateWikiPage(doer *User, oldTitle, title, content, mes
 			return ErrWikiAlreadyExist{filename}
 		}
 	} else {
-		os.Remove(path.Join(localPath, oldTitle+".md"))
+		file := path.Join(localPath, oldTitle+".md")
+
+		if err := os.Remove(file); err != nil {
+			return fmt.Errorf("Fail to remove %s: %v", file, err)
+		}
 	}
 
 	// SECURITY: if new file is a symlink to non-exist critical file,
@@ -118,7 +125,8 @@ func (repo *Repository) updateWikiPage(doer *User, oldTitle, title, content, mes
 	// as a new page operation.
 	// So we want to make sure the symlink is removed before write anything.
 	// The new file we created will be in normal text format.
-	os.Remove(filename)
+
+	_ = os.Remove(filename)
 
 	if err = ioutil.WriteFile(filename, []byte(content), 0666); err != nil {
 		return fmt.Errorf("WriteFile: %v", err)
@@ -141,14 +149,18 @@ func (repo *Repository) updateWikiPage(doer *User, oldTitle, title, content, mes
 	return nil
 }
 
+// AddWikiPage adds a new wiki page with a given title.
 func (repo *Repository) AddWikiPage(doer *User, title, content, message string) error {
 	return repo.updateWikiPage(doer, "", title, content, message, true)
 }
 
+// EditWikiPage updates a wiki page identified by its title,
+// optionally also changing title.
 func (repo *Repository) EditWikiPage(doer *User, oldTitle, title, content, message string) error {
 	return repo.updateWikiPage(doer, oldTitle, title, content, message, false)
 }
 
+// DeleteWikiPage deletes a wiki page identified by its title.
 func (repo *Repository) DeleteWikiPage(doer *User, title string) (err error) {
 	wikiWorkingPool.CheckIn(com.ToStr(repo.ID))
 	defer wikiWorkingPool.CheckOut(com.ToStr(repo.ID))
@@ -162,7 +174,10 @@ func (repo *Repository) DeleteWikiPage(doer *User, title string) (err error) {
 
 	title = ToWikiPageName(title)
 	filename := path.Join(localPath, title+".md")
-	os.Remove(filename)
+
+	if err := os.Remove(filename); err != nil {
+		return fmt.Errorf("Fail to remove %s: %v", filename, err)
+	}
 
 	message := "Delete page '" + title + "'"
 

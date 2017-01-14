@@ -5,18 +5,19 @@
 package admin
 
 import (
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
-	"github.com/go-gitea/gitea/routers"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/routers"
 )
 
 const (
-	REPOS base.TplName = "admin/repo/list"
+	tplRepos base.TplName = "admin/repo/list"
 )
 
+// Repos show all the repositories
 func Repos(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("admin.repositories")
 	ctx.Data["PageIsAdmin"] = true
@@ -27,11 +28,11 @@ func Repos(ctx *context.Context) {
 		Ranger:   models.Repositories,
 		Private:  true,
 		PageSize: setting.UI.Admin.RepoPagingNum,
-		OrderBy:  "id ASC",
-		TplName:  REPOS,
+		TplName:  tplRepos,
 	})
 }
 
+// DeleteRepo delete one repository
 func DeleteRepo(ctx *context.Context) {
 	repo, err := models.GetRepositoryByID(ctx.QueryInt64("id"))
 	if err != nil {
@@ -47,6 +48,6 @@ func DeleteRepo(ctx *context.Context) {
 
 	ctx.Flash.Success(ctx.Tr("repo.settings.deletion_success"))
 	ctx.JSON(200, map[string]interface{}{
-		"redirect": setting.AppSubUrl + "/admin/repos?page=" + ctx.Query("page"),
+		"redirect": setting.AppSubURL + "/admin/repos?page=" + ctx.Query("page"),
 	})
 }

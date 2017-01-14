@@ -9,12 +9,12 @@ import (
 
 	"github.com/Unknwon/com"
 
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/markdown"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/markdown"
+	"code.gitea.io/gitea/modules/setting"
 )
 
-func (issue *Issue) MailSubject() string {
+func (issue *Issue) mailSubject() string {
 	return fmt.Sprintf("[%s] %s (#%d)", issue.Repo.Name, issue.Title, issue.Index)
 }
 
@@ -24,7 +24,7 @@ func mailIssueCommentToParticipants(issue *Issue, doer *User, mentions []string)
 		return nil
 	}
 
-	// Mail wahtcers.
+	// Mail watchers.
 	watchers, err := GetWatchers(issue.RepoID)
 	if err != nil {
 		return fmt.Errorf("GetWatchers [%d]: %v", issue.RepoID, err)
@@ -69,7 +69,7 @@ func mailIssueCommentToParticipants(issue *Issue, doer *User, mentions []string)
 // and mentioned people.
 func (issue *Issue) MailParticipants() (err error) {
 	mentions := markdown.FindAllMentions(issue.Content)
-	if err = UpdateIssueMentions(issue.ID, mentions); err != nil {
+	if err = UpdateIssueMentions(x, issue.ID, mentions); err != nil {
 		return fmt.Errorf("UpdateIssueMentions [%d]: %v", issue.ID, err)
 	}
 

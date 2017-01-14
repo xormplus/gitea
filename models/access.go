@@ -4,20 +4,22 @@
 
 package models
 
-import (
-	"fmt"
+import "fmt"
 
-	"github.com/go-gitea/gitea/modules/log"
-)
-
+// AccessMode specifies the users access mode
 type AccessMode int
 
 const (
-	AccessModeNone  AccessMode = iota // 0
-	AccessModeRead                    // 1
-	AccessModeWrite                   // 2
-	AccessModeAdmin                   // 3
-	AccessModeOwner                   // 4
+	// AccessModeNone no access
+	AccessModeNone AccessMode = iota // 0
+	// AccessModeRead read access
+	AccessModeRead // 1
+	// AccessModeWrite write access
+	AccessModeWrite // 2
+	// AccessModeAdmin admin access
+	AccessModeAdmin // 3
+	// AccessModeOwner owner access
+	AccessModeOwner // 4
 )
 
 func (mode AccessMode) String() string {
@@ -57,21 +59,21 @@ type Access struct {
 	Mode   AccessMode
 }
 
-func accessLevel(e Engine, u *User, repo *Repository) (AccessMode, error) {
+func accessLevel(e Engine, user *User, repo *Repository) (AccessMode, error) {
 	mode := AccessModeNone
 	if !repo.IsPrivate {
 		mode = AccessModeRead
 	}
 
-	if u == nil {
+	if user == nil {
 		return mode, nil
 	}
 
-	if u.ID == repo.OwnerID {
+	if user.ID == repo.OwnerID {
 		return AccessModeOwner, nil
 	}
 
-	a := &Access{UserID: u.ID, RepoID: repo.ID}
+	a := &Access{UserID: user.ID, RepoID: repo.ID}
 	if has, err := e.Get(a); !has || err != nil {
 		return mode, err
 	}
@@ -80,43 +82,59 @@ func accessLevel(e Engine, u *User, repo *Repository) (AccessMode, error) {
 
 // AccessLevel returns the Access a user has to a repository. Will return NoneAccess if the
 // user does not have access. User can be nil!
-func AccessLevel(u *User, repo *Repository) (AccessMode, error) {
-	return accessLevel(x, u, repo)
+func AccessLevel(user *User, repo *Repository) (AccessMode, error) {
+	return accessLevel(x, user, repo)
 }
 
-func hasAccess(e Engine, u *User, repo *Repository, testMode AccessMode) (bool, error) {
-	mode, err := accessLevel(e, u, repo)
+func hasAccess(e Engine, user *User, repo *Repository, testMode AccessMode) (bool, error) {
+	mode, err := accessLevel(e, user, repo)
 	return testMode <= mode, err
 }
 
 // HasAccess returns true if someone has the request access level. User can be nil!
-func HasAccess(u *User, repo *Repository, testMode AccessMode) (bool, error) {
-	return hasAccess(x, u, repo, testMode)
+func HasAccess(user *User, repo *Repository, testMode AccessMode) (bool, error) {
+	return hasAccess(x, user, repo, testMode)
+}
+
+type repoAccess struct {
+	Access     `xorm:"extends"`
+	Repository `xorm:"extends"`
+}
+
+func (repoAccess) TableName() string {
+	return "access"
 }
 
 // GetRepositoryAccesses finds all repositories with their access mode where a user has access but does not own.
-func (u *User) GetRepositoryAccesses() (map[*Repository]AccessMode, error) {
-	accesses := make([]*Access, 0, 10)
-	if err := x.Find(&accesses, &Access{UserID: u.ID}); err != nil {
+func (user *User) GetRepositoryAccesses() (map[*Repository]AccessMode, error) {
+	rows, err := x.
+		Join("INNER", "repository", "repository.id = access.repo_id").
+		Where("access.user_id = ?", user.ID).
+		And("repository.owner_id <> ?", user.ID).
+		Rows(new(repoAccess))
+	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	repos := make(map[*Repository]AccessMode, len(accesses))
-	for _, access := range accesses {
-		repo, err := GetRepositoryByID(access.RepoID)
+	var repos = make(map[*Repository]AccessMode, 10)
+	var ownerCache = make(map[int64]*User, 10)
+	for rows.Next() {
+		var repo repoAccess
+		err = rows.Scan(&repo)
 		if err != nil {
-			if IsErrRepoNotExist(err) {
-				log.Error(4, "GetRepositoryByID: %v", err)
-				continue
+			return nil, err
+		}
+
+		var ok bool
+		if repo.Owner, ok = ownerCache[repo.OwnerID]; !ok {
+			if err = repo.GetOwner(); err != nil {
+				return nil, err
 			}
-			return nil, err
+			ownerCache[repo.OwnerID] = repo.Owner
 		}
-		if err = repo.GetOwner(); err != nil {
-			return nil, err
-		} else if repo.OwnerID == u.ID {
-			continue
-		}
-		repos[repo] = access.Mode
+
+		repos[&repo.Repository] = repo.Access.Mode
 	}
 	return repos, nil
 }
@@ -124,14 +142,18 @@ func (u *User) GetRepositoryAccesses() (map[*Repository]AccessMode, error) {
 // GetAccessibleRepositories finds repositories which the user has access but does not own.
 // If limit is smaller than 1 means returns all found results.
 func (user *User) GetAccessibleRepositories(limit int) (repos []*Repository, _ error) {
-	sess := x.Where("owner_id !=? ", user.ID).Desc("updated_unix")
+	sess := x.
+		Where("owner_id !=? ", user.ID).
+		Desc("updated_unix")
 	if limit > 0 {
 		sess.Limit(limit)
 		repos = make([]*Repository, 0, limit)
 	} else {
 		repos = make([]*Repository, 0, 10)
 	}
-	return repos, sess.Join("INNER", "access", "access.user_id = ? AND access.repo_id = repository.id", user.ID).Find(&repos)
+	return repos, sess.
+		Join("INNER", "access", "access.user_id = ? AND access.repo_id = repository.id", user.ID).
+		Find(&repos)
 }
 
 func maxAccessMode(modes ...AccessMode) AccessMode {
@@ -144,7 +166,7 @@ func maxAccessMode(modes ...AccessMode) AccessMode {
 	return max
 }
 
-// FIXME: do corss-comparison so reduce deletions and additions to the minimum?
+// FIXME: do cross-comparison so reduce deletions and additions to the minimum?
 func (repo *Repository) refreshAccesses(e Engine, accessMap map[int64]AccessMode) (err error) {
 	minMode := AccessModeRead
 	if !repo.IsPrivate {
@@ -241,6 +263,6 @@ func (repo *Repository) recalculateAccesses(e Engine) error {
 }
 
 // RecalculateAccesses recalculates all accesses for repository.
-func (r *Repository) RecalculateAccesses() error {
-	return r.recalculateAccesses(x)
+func (repo *Repository) RecalculateAccesses() error {
+	return repo.recalculateAccesses(x)
 }

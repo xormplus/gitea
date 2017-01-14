@@ -5,17 +5,18 @@
 package dev
 
 import (
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/setting"
 )
 
+// TemplatePreview render for previewing the indicated template
 func TemplatePreview(ctx *context.Context) {
 	ctx.Data["User"] = models.User{Name: "Unknown"}
 	ctx.Data["AppName"] = setting.AppName
 	ctx.Data["AppVer"] = setting.AppVer
-	ctx.Data["AppUrl"] = setting.AppUrl
+	ctx.Data["AppUrl"] = setting.AppURL
 	ctx.Data["Code"] = "2014031910370000009fff6782aadb2162b4a997acb69d4400888e0b9274657374"
 	ctx.Data["ActiveCodeLives"] = setting.Service.ActiveCodeLives / 60
 	ctx.Data["ResetPwdCodeLives"] = setting.Service.ResetPwdCodeLives / 60

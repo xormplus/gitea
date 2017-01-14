@@ -16,41 +16,44 @@ import (
 	"github.com/Unknwon/com"
 	"github.com/go-xorm/xorm"
 
-	"github.com/go-gitea/git"
-	api "github.com/go-gitea/go-sdk/gitea"
+	"code.gitea.io/git"
+	api "code.gitea.io/sdk/gitea"
 
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
 )
 
+// ActionType represents the type of an action.
 type ActionType int
 
+// Possible action types.
 const (
-	ActionCreateRepo         ActionType = iota + 1 // 1
-	ActionRenameRepo                               // 2
-	ActionStarRepo                                 // 3
-	ActionWatchRepo                                // 4
-	ActionCommitRepo                               // 5
-	ActionCreateIssue                              // 6
+	ActionCreateRepo        ActionType = iota + 1 // 1
+	ActionRenameRepo                              // 2
+	ActionStarRepo                                // 3
+	ActionWatchRepo                               // 4
+	ActionCommitRepo                              // 5
+	ActionCreateIssue                             // 6
 	ActionCreatePullRequest                       // 7
-	ActionTransferRepo                             // 8
-	ActionPushTag                                  // 9
-	ActionCommentIssue                             // 10
+	ActionTransferRepo                            // 8
+	ActionPushTag                                 // 9
+	ActionCommentIssue                            // 10
 	ActionMergePullRequest                        // 11
-	ActionCloseIssue                               // 12
-	ActionReopenIssue                              // 13
+	ActionCloseIssue                              // 12
+	ActionReopenIssue                             // 13
 	ActionClosePullRequest                        // 14
 	ActionReopenPullRequest                       // 15
 )
 
 var (
-	// Same as Github. See https://help.github.com/articles/closing-issues-via-commit-messages
-	IssueCloseKeywords  = []string{"close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"}
-	IssueReopenKeywords = []string{"reopen", "reopens", "reopened"}
+	// Same as Github. See
+	// https://help.github.com/articles/closing-issues-via-commit-messages
+	issueCloseKeywords  = []string{"close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"}
+	issueReopenKeywords = []string{"reopen", "reopens", "reopened"}
 
-	IssueCloseKeywordsPat, IssueReopenKeywordsPat *regexp.Regexp
-	IssueReferenceKeywordsPat                     *regexp.Regexp
+	issueCloseKeywordsPat, issueReopenKeywordsPat *regexp.Regexp
+	issueReferenceKeywordsPat                     *regexp.Regexp
 )
 
 func assembleKeywordsPattern(words []string) string {
@@ -58,34 +61,38 @@ func assembleKeywordsPattern(words []string) string {
 }
 
 func init() {
-	IssueCloseKeywordsPat = regexp.MustCompile(assembleKeywordsPattern(IssueCloseKeywords))
-	IssueReopenKeywordsPat = regexp.MustCompile(assembleKeywordsPattern(IssueReopenKeywords))
-	IssueReferenceKeywordsPat = regexp.MustCompile(`(?i)(?:)(^| )\S+`)
+	issueCloseKeywordsPat = regexp.MustCompile(assembleKeywordsPattern(issueCloseKeywords))
+	issueReopenKeywordsPat = regexp.MustCompile(assembleKeywordsPattern(issueReopenKeywords))
+	issueReferenceKeywordsPat = regexp.MustCompile(`(?i)(?:)(^| )\S+`)
 }
 
-// Action represents user operation type and other information to repository.,
-// it implemented interface base.Actioner so that can be used in template render.
+// Action represents user operation type and other information to
+// repository. It implemented interface base.Actioner so that can be
+// used in template render.
 type Action struct {
 	ID           int64 `xorm:"pk autoincr"`
-	UserID       int64 // Receiver user id.
+	UserID       int64 `xorm:"INDEX"` // Receiver user id.
 	OpType       ActionType
-	ActUserID    int64  // Action user id.
+	ActUserID    int64  `xorm:"INDEX"` // Action user id.
 	ActUserName  string // Action user name.
 	ActAvatar    string `xorm:"-"`
-	RepoID       int64
+	RepoID       int64  `xorm:"INDEX"`
 	RepoUserName string
 	RepoName     string
 	RefName      string
-	IsPrivate    bool      `xorm:"NOT NULL DEFAULT false"`
+	IsPrivate    bool      `xorm:"INDEX NOT NULL DEFAULT false"`
 	Content      string    `xorm:"TEXT"`
 	Created      time.Time `xorm:"-"`
-	CreatedUnix  int64
+	CreatedUnix  int64     `xorm:"INDEX"`
 }
 
+// BeforeInsert will be invoked by XORM before inserting a record
+// representing this object.
 func (a *Action) BeforeInsert() {
 	a.CreatedUnix = time.Now().Unix()
 }
 
+// AfterSet updates the webhook object upon setting a column.
 func (a *Action) AfterSet(colName string, _ xorm.Cell) {
 	switch colName {
 	case "created_unix":
@@ -93,65 +100,87 @@ func (a *Action) AfterSet(colName string, _ xorm.Cell) {
 	}
 }
 
+// GetOpType gets the ActionType of this action.
+// TODO: change return type to ActionType ?
 func (a *Action) GetOpType() int {
 	return int(a.OpType)
 }
 
+// GetActUserName gets the action's user name.
 func (a *Action) GetActUserName() string {
 	return a.ActUserName
 }
 
+// ShortActUserName gets the action's user name trimmed to max 20
+// chars.
 func (a *Action) ShortActUserName() string {
 	return base.EllipsisString(a.ActUserName, 20)
 }
 
+// GetRepoUserName returns the name of the action repository owner.
 func (a *Action) GetRepoUserName() string {
 	return a.RepoUserName
 }
 
+// ShortRepoUserName returns the name of the action repository owner
+// trimmed to max 20 chars.
 func (a *Action) ShortRepoUserName() string {
 	return base.EllipsisString(a.RepoUserName, 20)
 }
 
+// GetRepoName returns the name of the action repository.
 func (a *Action) GetRepoName() string {
 	return a.RepoName
 }
 
+// ShortRepoName returns the name of the action repository
+// trimmed to max 33 chars.
 func (a *Action) ShortRepoName() string {
 	return base.EllipsisString(a.RepoName, 33)
 }
 
+// GetRepoPath returns the virtual path to the action repository.
 func (a *Action) GetRepoPath() string {
 	return path.Join(a.RepoUserName, a.RepoName)
 }
 
+// ShortRepoPath returns the virtual path to the action repository
+// trimmed to max 20 + 1 + 33 chars.
 func (a *Action) ShortRepoPath() string {
 	return path.Join(a.ShortRepoUserName(), a.ShortRepoName())
 }
 
+// GetRepoLink returns relative link to action repository.
 func (a *Action) GetRepoLink() string {
-	if len(setting.AppSubUrl) > 0 {
-		return path.Join(setting.AppSubUrl, a.GetRepoPath())
+	if len(setting.AppSubURL) > 0 {
+		return path.Join(setting.AppSubURL, a.GetRepoPath())
 	}
 	return "/" + a.GetRepoPath()
 }
 
+// GetBranch returns the action's repository branch.
 func (a *Action) GetBranch() string {
 	return a.RefName
 }
 
+// GetContent returns the action's content.
 func (a *Action) GetContent() string {
 	return a.Content
 }
 
+// GetCreate returns the action creation time.
 func (a *Action) GetCreate() time.Time {
 	return a.Created
 }
 
+// GetIssueInfos returns a list of issues associated with
+// the action.
 func (a *Action) GetIssueInfos() []string {
 	return strings.SplitN(a.Content, "|", 2)
 }
 
+// GetIssueTitle returns the title of first issue associated
+// with the action.
 func (a *Action) GetIssueTitle() string {
 	index := com.StrTo(a.GetIssueInfos()[0]).MustInt64()
 	issue, err := GetIssueByIndex(a.RepoID, index)
@@ -162,6 +191,8 @@ func (a *Action) GetIssueTitle() string {
 	return issue.Title
 }
 
+// GetIssueContent returns the content of first issue associated with
+// this action.
 func (a *Action) GetIssueContent() string {
 	index := com.StrTo(a.GetIssueInfos()[0]).MustInt64()
 	issue, err := GetIssueByIndex(a.RepoID, index)
@@ -221,6 +252,7 @@ func issueIndexTrimRight(c rune) bool {
 	return !unicode.IsDigit(c)
 }
 
+// PushCommit represents a commit in a push operation.
 type PushCommit struct {
 	Sha1           string
 	Message        string
@@ -231,6 +263,7 @@ type PushCommit struct {
 	Timestamp      time.Time
 }
 
+// PushCommits represents list of commits in a push operation.
 type PushCommits struct {
 	Len        int
 	Commits    []*PushCommit
@@ -239,13 +272,16 @@ type PushCommits struct {
 	avatars map[string]string
 }
 
+// NewPushCommits creates a new PushCommits object.
 func NewPushCommits() *PushCommits {
 	return &PushCommits{
 		avatars: make(map[string]string),
 	}
 }
 
-func (pc *PushCommits) ToApiPayloadCommits(repoLink string) []*api.PayloadCommit {
+// ToAPIPayloadCommits converts a PushCommits object to
+// api.PayloadCommit format.
+func (pc *PushCommits) ToAPIPayloadCommits(repoLink string) []*api.PayloadCommit {
 	commits := make([]*api.PayloadCommit, len(pc.Commits))
 	for i, commit := range pc.Commits {
 		authorUsername := ""
@@ -281,21 +317,21 @@ func (pc *PushCommits) ToApiPayloadCommits(repoLink string) []*api.PayloadCommit
 
 // AvatarLink tries to match user in database with e-mail
 // in order to show custom avatar, and falls back to general avatar link.
-func (push *PushCommits) AvatarLink(email string) string {
-	_, ok := push.avatars[email]
+func (pc *PushCommits) AvatarLink(email string) string {
+	_, ok := pc.avatars[email]
 	if !ok {
 		u, err := GetUserByEmail(email)
 		if err != nil {
-			push.avatars[email] = base.AvatarLink(email)
+			pc.avatars[email] = base.AvatarLink(email)
 			if !IsErrUserNotExist(err) {
 				log.Error(4, "GetUserByEmail: %v", err)
 			}
 		} else {
-			push.avatars[email] = u.RelAvatarLink()
+			pc.avatars[email] = u.RelAvatarLink()
 		}
 	}
 
-	return push.avatars[email]
+	return pc.avatars[email]
 }
 
 // UpdateIssuesCommit checks if issues are manipulated by commit message.
@@ -305,7 +341,7 @@ func UpdateIssuesCommit(doer *User, repo *Repository, commits []*PushCommit) err
 		c := commits[i]
 
 		refMarked := make(map[int64]bool)
-		for _, ref := range IssueReferenceKeywordsPat.FindAllString(c.Message, -1) {
+		for _, ref := range issueReferenceKeywordsPat.FindAllString(c.Message, -1) {
 			ref = ref[strings.IndexByte(ref, byte(' '))+1:]
 			ref = strings.TrimRightFunc(ref, issueIndexTrimRight)
 
@@ -343,7 +379,7 @@ func UpdateIssuesCommit(doer *User, repo *Repository, commits []*PushCommit) err
 
 		refMarked = make(map[int64]bool)
 		// FIXME: can merge this one and next one to a common function.
-		for _, ref := range IssueCloseKeywordsPat.FindAllString(c.Message, -1) {
+		for _, ref := range issueCloseKeywordsPat.FindAllString(c.Message, -1) {
 			ref = ref[strings.IndexByte(ref, byte(' '))+1:]
 			ref = strings.TrimRightFunc(ref, issueIndexTrimRight)
 
@@ -382,8 +418,8 @@ func UpdateIssuesCommit(doer *User, repo *Repository, commits []*PushCommit) err
 			}
 		}
 
-		// It is conflict to have close and reopen at same time, so refsMarkd doesn't need to reinit here.
-		for _, ref := range IssueReopenKeywordsPat.FindAllString(c.Message, -1) {
+		// It is conflict to have close and reopen at same time, so refsMarked doesn't need to reinit here.
+		for _, ref := range issueReopenKeywordsPat.FindAllString(c.Message, -1) {
 			ref = ref[strings.IndexByte(ref, byte(' '))+1:]
 			ref = strings.TrimRightFunc(ref, issueIndexTrimRight)
 
@@ -425,6 +461,7 @@ func UpdateIssuesCommit(doer *User, repo *Repository, commits []*PushCommit) err
 	return nil
 }
 
+// CommitRepoActionOptions represent options of a new commit action.
 type CommitRepoActionOptions struct {
 	PusherName  string
 	RepoOwnerID int64
@@ -435,7 +472,8 @@ type CommitRepoActionOptions struct {
 	Commits     *PushCommits
 }
 
-// CommitRepoAction adds new commit actio to the repository, and prepare corresponding webhooks.
+// CommitRepoAction adds new commit action to the repository, and prepare
+// corresponding webhooks.
 func CommitRepoAction(opts CommitRepoActionOptions) error {
 	pusher, err := GetUserByName(opts.PusherName)
 	if err != nil {
@@ -456,12 +494,12 @@ func CommitRepoAction(opts CommitRepoActionOptions) error {
 	isNewBranch := false
 	opType := ActionCommitRepo
 	// Check it's tag push or branch.
-	if strings.HasPrefix(opts.RefFullName, git.TAG_PREFIX) {
+	if strings.HasPrefix(opts.RefFullName, git.TagPrefix) {
 		opType = ActionPushTag
 		opts.Commits = &PushCommits{}
 	} else {
 		// if not the first commit, set the compare URL.
-		if opts.OldCommitID == git.EMPTY_SHA {
+		if opts.OldCommitID == git.EmptySHA {
 			isNewBranch = true
 		} else {
 			opts.Commits.CompareURL = repo.ComposeCompareURL(opts.OldCommitID, opts.NewCommitID)
@@ -501,15 +539,17 @@ func CommitRepoAction(opts CommitRepoActionOptions) error {
 	}()
 
 	apiPusher := pusher.APIFormat()
-	apiRepo := repo.APIFormat(nil)
+	apiRepo := repo.APIFormat(AccessModeNone)
+
+	var shaSum string
 	switch opType {
 	case ActionCommitRepo: // Push
 		if err = PrepareWebhooks(repo, HookEventPush, &api.PushPayload{
 			Ref:        opts.RefFullName,
 			Before:     opts.OldCommitID,
 			After:      opts.NewCommitID,
-			CompareURL: setting.AppUrl + opts.Commits.CompareURL,
-			Commits:    opts.Commits.ToApiPayloadCommits(repo.HTMLURL()),
+			CompareURL: setting.AppURL + opts.Commits.CompareURL,
+			Commits:    opts.Commits.ToAPIPayloadCommits(repo.HTMLURL()),
 			Repo:       apiRepo,
 			Pusher:     apiPusher,
 			Sender:     apiPusher,
@@ -518,8 +558,17 @@ func CommitRepoAction(opts CommitRepoActionOptions) error {
 		}
 
 		if isNewBranch {
+			gitRepo, err := git.OpenRepository(repo.RepoPath())
+			if err != nil {
+				log.Error(4, "OpenRepository[%s]: %v", repo.RepoPath(), err)
+			}
+			shaSum, err = gitRepo.GetBranchCommitID(refName)
+			if err != nil {
+				log.Error(4, "GetBranchCommitID[%s]: %v", opts.RefFullName, err)
+			}
 			return PrepareWebhooks(repo, HookEventCreate, &api.CreatePayload{
 				Ref:     refName,
+				Sha:     shaSum,
 				RefType: "branch",
 				Repo:    apiRepo,
 				Sender:  apiPusher,
@@ -527,8 +576,17 @@ func CommitRepoAction(opts CommitRepoActionOptions) error {
 		}
 
 	case ActionPushTag: // Create
+		gitRepo, err := git.OpenRepository(repo.RepoPath())
+		if err != nil {
+			log.Error(4, "OpenRepository[%s]: %v", repo.RepoPath(), err)
+		}
+		shaSum, err = gitRepo.GetTagCommitID(refName)
+		if err != nil {
+			log.Error(4, "GetTagCommitID[%s]: %v", opts.RefFullName, err)
+		}
 		return PrepareWebhooks(repo, HookEventCreate, &api.CreatePayload{
 			Ref:     refName,
+			Sha:     shaSum,
 			RefType: "tag",
 			Repo:    apiRepo,
 			Sender:  apiPusher,
@@ -591,9 +649,14 @@ func MergePullRequestAction(actUser *User, repo *Repository, pull *Issue) error 
 // actorID can be -1 when isProfile is true or to skip the permission check.
 func GetFeeds(ctxUser *User, actorID, offset int64, isProfile bool) ([]*Action, error) {
 	actions := make([]*Action, 0, 20)
-	sess := x.Limit(20, int(offset)).Desc("id").Where("user_id = ?", ctxUser.ID)
+	sess := x.
+		Limit(20, int(offset)).
+		Desc("id").
+		Where("user_id = ?", ctxUser.ID)
 	if isProfile {
-		sess.And("is_private = ?", false).And("act_user_id = ?", ctxUser.ID)
+		sess.
+			And("is_private = ?", false).
+			And("act_user_id = ?", ctxUser.ID)
 	} else if actorID != -1 && ctxUser.IsOrganization() {
 		// FIXME: only need to get IDs here, not all fields of repository.
 		repos, _, err := ctxUser.GetUserRepositories(actorID, 1, ctxUser.NumRepos)

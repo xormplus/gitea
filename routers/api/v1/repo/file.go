@@ -5,14 +5,15 @@
 package repo
 
 import (
-	"github.com/go-gitea/git"
+	"code.gitea.io/git"
 
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/routers/repo"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/routers/repo"
 )
 
-// https://github.com/gogits/go-gogs-client/wiki/Repositories-Contents#download-raw-content
+// GetRawFile get a file by path on a repository
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories-Contents#download-raw-content
 func GetRawFile(ctx *context.APIContext) {
 	if !ctx.Repo.HasAccess() {
 		ctx.Status(404)
@@ -33,7 +34,8 @@ func GetRawFile(ctx *context.APIContext) {
 	}
 }
 
-// https://github.com/gogits/go-gogs-client/wiki/Repositories-Contents#download-archive
+// GetArchive get archive of a repository
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories-Contents#download-archive
 func GetArchive(ctx *context.APIContext) {
 	repoPath := models.RepoPath(ctx.Params(":username"), ctx.Params(":reponame"))
 	gitRepo, err := git.OpenRepository(repoPath)
@@ -46,6 +48,7 @@ func GetArchive(ctx *context.APIContext) {
 	repo.Download(ctx.Context)
 }
 
+// GetEditorconfig get editor config of a repository
 func GetEditorconfig(ctx *context.APIContext) {
 	ec, err := ctx.Repo.GetEditorconfig()
 	if err != nil {

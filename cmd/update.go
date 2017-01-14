@@ -9,9 +9,9 @@ import (
 
 	"github.com/urfave/cli"
 
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
 )
 
 // CmdUpdate represents the available update sub-command.
@@ -49,7 +49,7 @@ func runUpdate(c *cli.Context) error {
 	}
 
 	task := models.UpdateTask{
-		UUID:        os.Getenv("uuid"),
+		UUID:        os.Getenv("GITEA_UUID"),
 		RefName:     args[0],
 		OldCommitID: args[1],
 		NewCommitID: args[2],

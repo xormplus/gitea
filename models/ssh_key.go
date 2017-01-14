@@ -22,10 +22,9 @@ import (
 	"github.com/go-xorm/xorm"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/process"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/process"
+	"code.gitea.io/gitea/modules/setting"
 )
 
 const (
@@ -34,10 +33,13 @@ const (
 
 var sshOpLocker sync.Mutex
 
+// KeyType specifies the key type
 type KeyType int
 
 const (
+	// KeyTypeUser specifies the user key
 	KeyTypeUser = iota + 1
+	// KeyTypeDeploy specifies the deploy key
 	KeyTypeDeploy
 )
 
@@ -59,28 +61,31 @@ type PublicKey struct {
 	HasUsed           bool `xorm:"-"`
 }
 
-func (k *PublicKey) BeforeInsert() {
-	k.CreatedUnix = time.Now().Unix()
+// BeforeInsert will be invoked by XORM before inserting a record
+func (key *PublicKey) BeforeInsert() {
+	key.CreatedUnix = time.Now().Unix()
 }
 
-func (k *PublicKey) BeforeUpdate() {
-	k.UpdatedUnix = time.Now().Unix()
+// BeforeUpdate is invoked from XORM before updating this object.
+func (key *PublicKey) BeforeUpdate() {
+	key.UpdatedUnix = time.Now().Unix()
 }
 
-func (k *PublicKey) AfterSet(colName string, _ xorm.Cell) {
+// AfterSet is invoked from XORM after setting the value of a field of this object.
+func (key *PublicKey) AfterSet(colName string, _ xorm.Cell) {
 	switch colName {
 	case "created_unix":
-		k.Created = time.Unix(k.CreatedUnix, 0).Local()
+		key.Created = time.Unix(key.CreatedUnix, 0).Local()
 	case "updated_unix":
-		k.Updated = time.Unix(k.UpdatedUnix, 0).Local()
-		k.HasUsed = k.Updated.After(k.Created)
-		k.HasRecentActivity = k.Updated.Add(7 * 24 * time.Hour).After(time.Now())
+		key.Updated = time.Unix(key.UpdatedUnix, 0).Local()
+		key.HasUsed = key.Updated.After(key.Created)
+		key.HasRecentActivity = key.Updated.Add(7 * 24 * time.Hour).After(time.Now())
 	}
 }
 
 // OmitEmail returns content of public key without email address.
-func (k *PublicKey) OmitEmail() string {
-	return strings.Join(strings.Split(k.Content, " ")[:2], " ")
+func (key *PublicKey) OmitEmail() string {
+	return strings.Join(strings.Split(key.Content, " ")[:2], " ")
 }
 
 // AuthorizedString returns formatted public key string for authorized_keys file.
@@ -106,6 +111,8 @@ func extractTypeFromBase64Key(key string) (string, error) {
 func parseKeyString(content string) (string, error) {
 	// Transform all legal line endings to a single "\n".
 	content = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(content)
+	// remove trailing newline (and beginning spaces too)
+	content = strings.TrimSpace(content)
 	lines := strings.Split(content, "\n")
 
 	var keyType, keyContent, keyComment string
@@ -165,7 +172,7 @@ func parseKeyString(content string) (string, error) {
 // writeTmpKeyFile writes key content to a temporary file
 // and returns the name of that file, along with any possible errors.
 func writeTmpKeyFile(content string) (string, error) {
-	tmpFile, err := ioutil.TempFile(setting.SSH.KeyTestPath, "gogs_keytest")
+	tmpFile, err := ioutil.TempFile(setting.SSH.KeyTestPath, "gitea_keytest")
 	if err != nil {
 		return "", fmt.Errorf("TempFile: %v", err)
 	}
@@ -347,7 +354,7 @@ func appendAuthorizedKeysToFile(keys ...*PublicKey) error {
 	return nil
 }
 
-// checkKeyContent onlys checks if key content has been used as public key,
+// checkKeyContent only checks if key content has been used as public key,
 // it is OK to use same key as deploy key for multiple repositories/users.
 func checkKeyContent(content string) error {
 	has, err := x.Get(&PublicKey{
@@ -366,7 +373,12 @@ func addKey(e Engine, key *PublicKey) (err error) {
 	// Calculate fingerprint.
 	tmpPath := strings.Replace(path.Join(os.TempDir(), fmt.Sprintf("%d", time.Now().Nanosecond()),
 		"id_rsa.pub"), "\\", "/", -1)
-	os.MkdirAll(path.Dir(tmpPath), os.ModePerm)
+	dir := path.Dir(tmpPath)
+
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		return fmt.Errorf("Fail to create dir %s: %v", dir, err)
+	}
+
 	if err = ioutil.WriteFile(tmpPath, []byte(key.Content), 0644); err != nil {
 		return err
 	}
@@ -398,7 +410,9 @@ func AddPublicKey(ownerID int64, name, content string) (*PublicKey, error) {
 	}
 
 	// Key name of same user cannot be duplicated.
-	has, err := x.Where("owner_id = ? AND name = ?", ownerID, name).Get(new(PublicKey))
+	has, err := x.
+		Where("owner_id = ? AND name = ?", ownerID, name).
+		Get(new(PublicKey))
 	if err != nil {
 		return nil, err
 	} else if has {
@@ -428,7 +442,9 @@ func AddPublicKey(ownerID int64, name, content string) (*PublicKey, error) {
 // GetPublicKeyByID returns public key by given ID.
 func GetPublicKeyByID(keyID int64) (*PublicKey, error) {
 	key := new(PublicKey)
-	has, err := x.Id(keyID).Get(key)
+	has, err := x.
+		Id(keyID).
+		Get(key)
 	if err != nil {
 		return nil, err
 	} else if !has {
@@ -441,7 +457,9 @@ func GetPublicKeyByID(keyID int64) (*PublicKey, error) {
 // and returns public key found.
 func SearchPublicKeyByContent(content string) (*PublicKey, error) {
 	key := new(PublicKey)
-	has, err := x.Where("content like ?", content+"%").Get(key)
+	has, err := x.
+		Where("content like ?", content+"%").
+		Get(key)
 	if err != nil {
 		return nil, err
 	} else if !has {
@@ -453,7 +471,9 @@ func SearchPublicKeyByContent(content string) (*PublicKey, error) {
 // ListPublicKeys returns a list of public keys belongs to given user.
 func ListPublicKeys(uid int64) ([]*PublicKey, error) {
 	keys := make([]*PublicKey, 0, 5)
-	return keys, x.Where("owner_id = ?", uid).Find(&keys)
+	return keys, x.
+		Where("owner_id = ?", uid).
+		Find(&keys)
 }
 
 // UpdatePublicKey updates given public key.
@@ -468,7 +488,7 @@ func deletePublicKeys(e *xorm.Session, keyIDs ...int64) error {
 		return nil
 	}
 
-	_, err := e.In("id", strings.Join(base.Int64sToStrings(keyIDs), ",")).Delete(new(PublicKey))
+	_, err := e.In("id", keyIDs).Delete(new(PublicKey))
 	return err
 }
 
@@ -506,7 +526,7 @@ func DeletePublicKey(doer *User, id int64) (err error) {
 
 // RewriteAllPublicKeys removes any authorized key and rewrite all keys from database again.
 // Note: x.Iterate does not get latest data after insert/delete, so we have to call this function
-// outsite any session scope independently.
+// outside any session scope independently.
 func RewriteAllPublicKeys() error {
 	sshOpLocker.Lock()
 	defer sshOpLocker.Unlock()
@@ -564,45 +584,52 @@ type DeployKey struct {
 	HasUsed           bool `xorm:"-"`
 }
 
-func (k *DeployKey) BeforeInsert() {
-	k.CreatedUnix = time.Now().Unix()
+// BeforeInsert will be invoked by XORM before inserting a record
+func (key *DeployKey) BeforeInsert() {
+	key.CreatedUnix = time.Now().Unix()
 }
 
-func (k *DeployKey) BeforeUpdate() {
-	k.UpdatedUnix = time.Now().Unix()
+// BeforeUpdate is invoked from XORM before updating this object.
+func (key *DeployKey) BeforeUpdate() {
+	key.UpdatedUnix = time.Now().Unix()
 }
 
-func (k *DeployKey) AfterSet(colName string, _ xorm.Cell) {
+// AfterSet is invoked from XORM after setting the value of a field of this object.
+func (key *DeployKey) AfterSet(colName string, _ xorm.Cell) {
 	switch colName {
 	case "created_unix":
-		k.Created = time.Unix(k.CreatedUnix, 0).Local()
+		key.Created = time.Unix(key.CreatedUnix, 0).Local()
 	case "updated_unix":
-		k.Updated = time.Unix(k.UpdatedUnix, 0).Local()
-		k.HasUsed = k.Updated.After(k.Created)
-		k.HasRecentActivity = k.Updated.Add(7 * 24 * time.Hour).After(time.Now())
+		key.Updated = time.Unix(key.UpdatedUnix, 0).Local()
+		key.HasUsed = key.Updated.After(key.Created)
+		key.HasRecentActivity = key.Updated.Add(7 * 24 * time.Hour).After(time.Now())
 	}
 }
 
 // GetContent gets associated public key content.
-func (k *DeployKey) GetContent() error {
-	pkey, err := GetPublicKeyByID(k.KeyID)
+func (key *DeployKey) GetContent() error {
+	pkey, err := GetPublicKeyByID(key.KeyID)
 	if err != nil {
 		return err
 	}
-	k.Content = pkey.Content
+	key.Content = pkey.Content
 	return nil
 }
 
 func checkDeployKey(e Engine, keyID, repoID int64, name string) error {
 	// Note: We want error detail, not just true or false here.
-	has, err := e.Where("key_id = ? AND repo_id = ?", keyID, repoID).Get(new(DeployKey))
+	has, err := e.
+		Where("key_id = ? AND repo_id = ?", keyID, repoID).
+		Get(new(DeployKey))
 	if err != nil {
 		return err
 	} else if has {
 		return ErrDeployKeyAlreadyExist{keyID, repoID}
 	}
 
-	has, err = e.Where("repo_id = ? AND name = ?", repoID, name).Get(new(DeployKey))
+	has, err = e.
+		Where("repo_id = ? AND name = ?", repoID, name).
+		Get(new(DeployKey))
 	if err != nil {
 		return err
 	} else if has {
@@ -630,7 +657,9 @@ func addDeployKey(e *xorm.Session, keyID, repoID int64, name, fingerprint string
 
 // HasDeployKey returns true if public key is a deploy key of given repository.
 func HasDeployKey(keyID, repoID int64) bool {
-	has, _ := x.Where("key_id = ? AND repo_id = ?", keyID, repoID).Get(new(DeployKey))
+	has, _ := x.
+		Where("key_id = ? AND repo_id = ?", keyID, repoID).
+		Get(new(DeployKey))
 	return has
 }
 
@@ -739,7 +768,9 @@ func DeleteDeployKey(doer *User, id int64) error {
 	}
 
 	// Check if this is the last reference to same key content.
-	has, err := sess.Where("key_id = ?", key.KeyID).Get(new(DeployKey))
+	has, err := sess.
+		Where("key_id = ?", key.KeyID).
+		Get(new(DeployKey))
 	if err != nil {
 		return err
 	} else if !has {
@@ -754,5 +785,7 @@ func DeleteDeployKey(doer *User, id int64) error {
 // ListDeployKeys returns all deploy keys by given repository ID.
 func ListDeployKeys(repoID int64) ([]*DeployKey, error) {
 	keys := make([]*DeployKey, 0, 5)
-	return keys, x.Where("repo_id = ?", repoID).Find(&keys)
+	return keys, x.
+		Where("repo_id = ?", repoID).
+		Find(&keys)
 }

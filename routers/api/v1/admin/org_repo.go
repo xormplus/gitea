@@ -5,10 +5,11 @@
 package admin
 
 import (
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/context"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/context"
 )
 
+// GetRepositoryByParams api for getting repository by orgnizition ID and repo name
 func GetRepositoryByParams(ctx *context.APIContext) *models.Repository {
 	repo, err := models.GetRepositoryByName(ctx.Org.Team.OrgID, ctx.Params(":reponame"))
 	if err != nil {
@@ -22,6 +23,7 @@ func GetRepositoryByParams(ctx *context.APIContext) *models.Repository {
 	return repo
 }
 
+// AddTeamRepository api for adding a repository to a team
 func AddTeamRepository(ctx *context.APIContext) {
 	repo := GetRepositoryByParams(ctx)
 	if ctx.Written() {
@@ -35,6 +37,7 @@ func AddTeamRepository(ctx *context.APIContext) {
 	ctx.Status(204)
 }
 
+// RemoveTeamRepository api for removing a repository from a team
 func RemoveTeamRepository(ctx *context.APIContext) {
 	repo := GetRepositoryByParams(ctx)
 	if ctx.Written() {

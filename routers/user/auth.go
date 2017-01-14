@@ -10,20 +10,23 @@ import (
 
 	"github.com/go-macaron/captcha"
 
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/auth"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/auth"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
 )
 
 const (
-	SIGNIN          base.TplName = "user/auth/signin"
-	SIGNUP          base.TplName = "user/auth/signup"
-	ACTIVATE        base.TplName = "user/auth/activate"
-	FORGOT_PASSWORD base.TplName = "user/auth/forgot_passwd"
-	RESET_PASSWORD  base.TplName = "user/auth/reset_passwd"
+	// tplSignIn template for sign in page
+	tplSignIn base.TplName = "user/auth/signin"
+	// tplSignUp template path for sign up page
+	tplSignUp base.TplName = "user/auth/signup"
+	// TplActivate template path for activate user
+	TplActivate       base.TplName = "user/auth/activate"
+	tplForgotPassword base.TplName = "user/auth/forgot_passwd"
+	tplResetPassword  base.TplName = "user/auth/reset_passwd"
 )
 
 // AutoSignIn reads cookie and try to auto-login.
@@ -41,8 +44,8 @@ func AutoSignIn(ctx *context.Context) (bool, error) {
 	defer func() {
 		if !isSucceed {
 			log.Trace("auto-login cookie cleared: %s", uname)
-			ctx.SetCookie(setting.CookieUserName, "", -1, setting.AppSubUrl)
-			ctx.SetCookie(setting.CookieRememberName, "", -1, setting.AppSubUrl)
+			ctx.SetCookie(setting.CookieUserName, "", -1, setting.AppSubURL)
+			ctx.SetCookie(setting.CookieRememberName, "", -1, setting.AppSubURL)
 		}
 	}()
 
@@ -62,10 +65,11 @@ func AutoSignIn(ctx *context.Context) (bool, error) {
 	isSucceed = true
 	ctx.Session.Set("uid", u.ID)
 	ctx.Session.Set("uname", u.Name)
-	ctx.SetCookie(setting.CSRFCookieName, "", -1, setting.AppSubUrl)
+	ctx.SetCookie(setting.CSRFCookieName, "", -1, setting.AppSubURL)
 	return true, nil
 }
 
+// SignIn render sign in page
 func SignIn(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("sign_in")
 
@@ -78,36 +82,37 @@ func SignIn(ctx *context.Context) {
 
 	redirectTo := ctx.Query("redirect_to")
 	if len(redirectTo) > 0 {
-		ctx.SetCookie("redirect_to", redirectTo, 0, setting.AppSubUrl)
+		ctx.SetCookie("redirect_to", redirectTo, 0, setting.AppSubURL)
 	} else {
 		redirectTo, _ = url.QueryUnescape(ctx.GetCookie("redirect_to"))
 	}
 
 	if isSucceed {
 		if len(redirectTo) > 0 {
-			ctx.SetCookie("redirect_to", "", -1, setting.AppSubUrl)
+			ctx.SetCookie("redirect_to", "", -1, setting.AppSubURL)
 			ctx.Redirect(redirectTo)
 		} else {
-			ctx.Redirect(setting.AppSubUrl + "/")
+			ctx.Redirect(setting.AppSubURL + "/")
 		}
 		return
 	}
 
-	ctx.HTML(200, SIGNIN)
+	ctx.HTML(200, tplSignIn)
 }
 
+// SignInPost response for sign in request
 func SignInPost(ctx *context.Context, form auth.SignInForm) {
 	ctx.Data["Title"] = ctx.Tr("sign_in")
 
 	if ctx.HasError() {
-		ctx.HTML(200, SIGNIN)
+		ctx.HTML(200, tplSignIn)
 		return
 	}
 
 	u, err := models.UserSignIn(form.UserName, form.Password)
 	if err != nil {
 		if models.IsErrUserNotExist(err) {
-			ctx.RenderWithErr(ctx.Tr("form.username_password_incorrect"), SIGNIN, &form)
+			ctx.RenderWithErr(ctx.Tr("form.username_password_incorrect"), tplSignIn, &form)
 		} else {
 			ctx.Handle(500, "UserSignIn", err)
 		}
@@ -116,38 +121,47 @@ func SignInPost(ctx *context.Context, form auth.SignInForm) {
 
 	if form.Remember {
 		days := 86400 * setting.LogInRememberDays
-		ctx.SetCookie(setting.CookieUserName, u.Name, days, setting.AppSubUrl)
+		ctx.SetCookie(setting.CookieUserName, u.Name, days, setting.AppSubURL)
 		ctx.SetSuperSecureCookie(base.EncodeMD5(u.Rands+u.Passwd),
-			setting.CookieRememberName, u.Name, days, setting.AppSubUrl)
+			setting.CookieRememberName, u.Name, days, setting.AppSubURL)
 	}
 
 	ctx.Session.Set("uid", u.ID)
 	ctx.Session.Set("uname", u.Name)
 
 	// Clear whatever CSRF has right now, force to generate a new one
-	ctx.SetCookie(setting.CSRFCookieName, "", -1, setting.AppSubUrl)
+	ctx.SetCookie(setting.CSRFCookieName, "", -1, setting.AppSubURL)
+
+	// Register last login
+	u.SetLastLogin()
+	if err := models.UpdateUser(u); err != nil {
+		ctx.Handle(500, "UpdateUser", err)
+		return
+	}
 
 	if redirectTo, _ := url.QueryUnescape(ctx.GetCookie("redirect_to")); len(redirectTo) > 0 {
-		ctx.SetCookie("redirect_to", "", -1, setting.AppSubUrl)
+		ctx.SetCookie("redirect_to", "", -1, setting.AppSubURL)
 		ctx.Redirect(redirectTo)
 		return
 	}
 
-	ctx.Redirect(setting.AppSubUrl + "/")
+	ctx.Redirect(setting.AppSubURL + "/")
 }
 
+// SignOut sign out from login status
 func SignOut(ctx *context.Context) {
 	ctx.Session.Delete("uid")
 	ctx.Session.Delete("uname")
 	ctx.Session.Delete("socialId")
 	ctx.Session.Delete("socialName")
 	ctx.Session.Delete("socialEmail")
-	ctx.SetCookie(setting.CookieUserName, "", -1, setting.AppSubUrl)
-	ctx.SetCookie(setting.CookieRememberName, "", -1, setting.AppSubUrl)
-	ctx.SetCookie(setting.CSRFCookieName, "", -1, setting.AppSubUrl)
-	ctx.Redirect(setting.AppSubUrl + "/")
+	ctx.SetCookie(setting.CookieUserName, "", -1, setting.AppSubURL)
+	ctx.SetCookie(setting.CookieRememberName, "", -1, setting.AppSubURL)
+	ctx.SetCookie(setting.CSRFCookieName, "", -1, setting.AppSubURL)
+	ctx.Redirect(setting.AppSubURL + "/")
 }
 
+// SignUp render the register page
 func SignUp(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("sign_up")
 
@@ -155,13 +169,14 @@ func SignUp(ctx *context.Context) {
 
 	if setting.Service.DisableRegistration {
 		ctx.Data["DisableRegistration"] = true
-		ctx.HTML(200, SIGNUP)
+		ctx.HTML(200, tplSignUp)
 		return
 	}
 
-	ctx.HTML(200, SIGNUP)
+	ctx.HTML(200, tplSignUp)
 }
 
+// SignUpPost response for sign up information submission
 func SignUpPost(ctx *context.Context, cpt *captcha.Captcha, form auth.RegisterForm) {
 	ctx.Data["Title"] = ctx.Tr("sign_up")
 
@@ -173,19 +188,24 @@ func SignUpPost(ctx *context.Context, cpt *captcha.Captcha, form auth.RegisterFo
 	}
 
 	if ctx.HasError() {
-		ctx.HTML(200, SIGNUP)
+		ctx.HTML(200, tplSignUp)
 		return
 	}
 
 	if setting.Service.EnableCaptcha && !cpt.VerifyReq(ctx.Req) {
 		ctx.Data["Err_Captcha"] = true
-		ctx.RenderWithErr(ctx.Tr("form.captcha_incorrect"), SIGNUP, &form)
+		ctx.RenderWithErr(ctx.Tr("form.captcha_incorrect"), tplSignUp, &form)
 		return
 	}
 
 	if form.Password != form.Retype {
 		ctx.Data["Err_Password"] = true
-		ctx.RenderWithErr(ctx.Tr("form.password_not_match"), SIGNUP, &form)
+		ctx.RenderWithErr(ctx.Tr("form.password_not_match"), tplSignUp, &form)
+		return
+	}
+	if len(form.Password) < setting.MinPasswordLength {
+		ctx.Data["Err_Password"] = true
+		ctx.RenderWithErr(ctx.Tr("auth.password_too_short", setting.MinPasswordLength), tplSignUp, &form)
 		return
 	}
 
@@ -199,16 +219,16 @@ func SignUpPost(ctx *context.Context, cpt *captcha.Captcha, form auth.RegisterFo
 		switch {
 		case models.IsErrUserAlreadyExist(err):
 			ctx.Data["Err_UserName"] = true
-			ctx.RenderWithErr(ctx.Tr("form.username_been_taken"), SIGNUP, &form)
+			ctx.RenderWithErr(ctx.Tr("form.username_been_taken"), tplSignUp, &form)
 		case models.IsErrEmailAlreadyUsed(err):
 			ctx.Data["Err_Email"] = true
-			ctx.RenderWithErr(ctx.Tr("form.email_been_used"), SIGNUP, &form)
+			ctx.RenderWithErr(ctx.Tr("form.email_been_used"), tplSignUp, &form)
 		case models.IsErrNameReserved(err):
 			ctx.Data["Err_UserName"] = true
-			ctx.RenderWithErr(ctx.Tr("user.form.name_reserved", err.(models.ErrNameReserved).Name), SIGNUP, &form)
+			ctx.RenderWithErr(ctx.Tr("user.form.name_reserved", err.(models.ErrNameReserved).Name), tplSignUp, &form)
 		case models.IsErrNamePatternNotAllowed(err):
 			ctx.Data["Err_UserName"] = true
-			ctx.RenderWithErr(ctx.Tr("user.form.name_pattern_not_allowed", err.(models.ErrNamePatternNotAllowed).Pattern), SIGNUP, &form)
+			ctx.RenderWithErr(ctx.Tr("user.form.name_pattern_not_allowed", err.(models.ErrNamePatternNotAllowed).Pattern), tplSignUp, &form)
 		default:
 			ctx.Handle(500, "CreateUser", err)
 		}
@@ -232,7 +252,7 @@ func SignUpPost(ctx *context.Context, cpt *captcha.Captcha, form auth.RegisterFo
 		ctx.Data["IsSendRegisterMail"] = true
 		ctx.Data["Email"] = u.Email
 		ctx.Data["Hours"] = setting.Service.ActiveCodeLives / 60
-		ctx.HTML(200, ACTIVATE)
+		ctx.HTML(200, TplActivate)
 
 		if err := ctx.Cache.Put("MailResendLimit_"+u.LowerName, u.LowerName, 180); err != nil {
 			log.Error(4, "Set cache(MailResendLimit) fail: %v", err)
@@ -240,9 +260,10 @@ func SignUpPost(ctx *context.Context, cpt *captcha.Captcha, form auth.RegisterFo
 		return
 	}
 
-	ctx.Redirect(setting.AppSubUrl + "/user/login")
+	ctx.Redirect(setting.AppSubURL + "/user/login")
 }
 
+// Activate render activate user page
 func Activate(ctx *context.Context) {
 	code := ctx.Query("code")
 	if len(code) == 0 {
@@ -266,14 +287,18 @@ func Activate(ctx *context.Context) {
 		} else {
 			ctx.Data["ServiceNotEnabled"] = true
 		}
-		ctx.HTML(200, ACTIVATE)
+		ctx.HTML(200, TplActivate)
 		return
 	}
 
 	// Verify code.
 	if user := models.VerifyUserActiveCode(code); user != nil {
 		user.IsActive = true
-		user.Rands = models.GetUserSalt()
+		var err error
+		if user.Rands, err = models.GetUserSalt(); err != nil {
+			ctx.Handle(500, "UpdateUser", err)
+			return
+		}
 		if err := models.UpdateUser(user); err != nil {
 			if models.IsErrUserNotExist(err) {
 				ctx.Error(404)
@@ -287,20 +312,21 @@ func Activate(ctx *context.Context) {
 
 		ctx.Session.Set("uid", user.ID)
 		ctx.Session.Set("uname", user.Name)
-		ctx.Redirect(setting.AppSubUrl + "/")
+		ctx.Redirect(setting.AppSubURL + "/")
 		return
 	}
 
 	ctx.Data["IsActivateFailed"] = true
-	ctx.HTML(200, ACTIVATE)
+	ctx.HTML(200, TplActivate)
 }
 
+// ActivateEmail render the activate email page
 func ActivateEmail(ctx *context.Context) {
 	code := ctx.Query("code")
-	email_string := ctx.Query("email")
+	emailStr := ctx.Query("email")
 
 	// Verify code.
-	if email := models.VerifyActiveEmailCode(code, email_string); email != nil {
+	if email := models.VerifyActiveEmailCode(code, emailStr); email != nil {
 		if err := email.Activate(); err != nil {
 			ctx.Handle(500, "ActivateEmail", err)
 		}
@@ -309,23 +335,25 @@ func ActivateEmail(ctx *context.Context) {
 		ctx.Flash.Success(ctx.Tr("settings.add_email_success"))
 	}
 
-	ctx.Redirect(setting.AppSubUrl + "/user/settings/email")
+	ctx.Redirect(setting.AppSubURL + "/user/settings/email")
 	return
 }
 
+// ForgotPasswd render the forget pasword page
 func ForgotPasswd(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("auth.forgot_password")
 
 	if setting.MailService == nil {
 		ctx.Data["IsResetDisable"] = true
-		ctx.HTML(200, FORGOT_PASSWORD)
+		ctx.HTML(200, tplForgotPassword)
 		return
 	}
 
 	ctx.Data["IsResetRequest"] = true
-	ctx.HTML(200, FORGOT_PASSWORD)
+	ctx.HTML(200, tplForgotPassword)
 }
 
+// ForgotPasswdPost response for forget password request
 func ForgotPasswdPost(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("auth.forgot_password")
 
@@ -343,23 +371,23 @@ func ForgotPasswdPost(ctx *context.Context) {
 		if models.IsErrUserNotExist(err) {
 			ctx.Data["Hours"] = setting.Service.ActiveCodeLives / 60
 			ctx.Data["IsResetSent"] = true
-			ctx.HTML(200, FORGOT_PASSWORD)
+			ctx.HTML(200, tplForgotPassword)
 			return
-		} else {
-			ctx.Handle(500, "user.ResetPasswd(check existence)", err)
 		}
+
+		ctx.Handle(500, "user.ResetPasswd(check existence)", err)
 		return
 	}
 
 	if !u.IsLocal() {
 		ctx.Data["Err_Email"] = true
-		ctx.RenderWithErr(ctx.Tr("auth.non_local_account"), FORGOT_PASSWORD, nil)
+		ctx.RenderWithErr(ctx.Tr("auth.non_local_account"), tplForgotPassword, nil)
 		return
 	}
 
 	if ctx.Cache.IsExist("MailResendLimit_" + u.LowerName) {
 		ctx.Data["ResendLimited"] = true
-		ctx.HTML(200, FORGOT_PASSWORD)
+		ctx.HTML(200, tplForgotPassword)
 		return
 	}
 
@@ -370,9 +398,10 @@ func ForgotPasswdPost(ctx *context.Context) {
 
 	ctx.Data["Hours"] = setting.Service.ActiveCodeLives / 60
 	ctx.Data["IsResetSent"] = true
-	ctx.HTML(200, FORGOT_PASSWORD)
+	ctx.HTML(200, tplForgotPassword)
 }
 
+// ResetPasswd render the reset password page
 func ResetPasswd(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("auth.reset_password")
 
@@ -383,9 +412,10 @@ func ResetPasswd(ctx *context.Context) {
 	}
 	ctx.Data["Code"] = code
 	ctx.Data["IsResetForm"] = true
-	ctx.HTML(200, RESET_PASSWORD)
+	ctx.HTML(200, tplResetPassword)
 }
 
+// ResetPasswdPost response from reset password request
 func ResetPasswdPost(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("auth.reset_password")
 
@@ -399,16 +429,23 @@ func ResetPasswdPost(ctx *context.Context) {
 	if u := models.VerifyUserActiveCode(code); u != nil {
 		// Validate password length.
 		passwd := ctx.Query("password")
-		if len(passwd) < 6 {
+		if len(passwd) < setting.MinPasswordLength {
 			ctx.Data["IsResetForm"] = true
 			ctx.Data["Err_Password"] = true
-			ctx.RenderWithErr(ctx.Tr("auth.password_too_short"), RESET_PASSWORD, nil)
+			ctx.RenderWithErr(ctx.Tr("auth.password_too_short", setting.MinPasswordLength), tplResetPassword, nil)
 			return
 		}
 
 		u.Passwd = passwd
-		u.Rands = models.GetUserSalt()
-		u.Salt = models.GetUserSalt()
+		var err error
+		if u.Rands, err = models.GetUserSalt(); err != nil {
+			ctx.Handle(500, "UpdateUser", err)
+			return
+		}
+		if u.Salt, err = models.GetUserSalt(); err != nil {
+			ctx.Handle(500, "UpdateUser", err)
+			return
+		}
 		u.EncodePasswd()
 		if err := models.UpdateUser(u); err != nil {
 			ctx.Handle(500, "UpdateUser", err)
@@ -416,10 +453,10 @@ func ResetPasswdPost(ctx *context.Context) {
 		}
 
 		log.Trace("User password reset: %s", u.Name)
-		ctx.Redirect(setting.AppSubUrl + "/user/login")
+		ctx.Redirect(setting.AppSubURL + "/user/login")
 		return
 	}
 
 	ctx.Data["IsResetFailed"] = true
-	ctx.HTML(200, RESET_PASSWORD)
+	ctx.HTML(200, tplResetPassword)
 }

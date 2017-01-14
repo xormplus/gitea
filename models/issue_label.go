@@ -13,9 +13,7 @@ import (
 
 	"github.com/go-xorm/xorm"
 
-	api "github.com/go-gitea/go-sdk/gitea"
-
-	"github.com/go-gitea/gitea/modules/base"
+	api "code.gitea.io/sdk/gitea"
 )
 
 var labelColorPattern = regexp.MustCompile("#([a-fA-F0-9]{6})")
@@ -64,11 +62,12 @@ type Label struct {
 	IsChecked       bool `xorm:"-"`
 }
 
+// APIFormat converts a Label to the api.Label format
 func (label *Label) APIFormat() *api.Label {
 	return &api.Label{
 		ID:    label.ID,
 		Name:  label.Name,
-		Color: label.Color,
+		Color: strings.TrimLeft(label.Color, "#"),
 	}
 }
 
@@ -79,9 +78,9 @@ func (label *Label) CalOpenIssues() {
 
 // ForegroundColor calculates the text color for labels based
 // on their background color.
-func (l *Label) ForegroundColor() template.CSS {
-	if strings.HasPrefix(l.Color, "#") {
-		if color, err := strconv.ParseUint(l.Color[1:], 16, 64); err == nil {
+func (label *Label) ForegroundColor() template.CSS {
+	if strings.HasPrefix(label.Color, "#") {
+		if color, err := strconv.ParseUint(label.Color[1:], 16, 64); err == nil {
 			r := float32(0xFF & (color >> 16))
 			g := float32(0xFF & (color >> 8))
 			b := float32(0xFF & color)
@@ -101,6 +100,27 @@ func (l *Label) ForegroundColor() template.CSS {
 func NewLabels(labels ...*Label) error {
 	_, err := x.Insert(labels)
 	return err
+}
+
+// getLabelInRepoByName returns a label by Name in given repository.
+// If pass repoID as 0, then ORM will ignore limitation of repository
+// and can return arbitrary label with any valid ID.
+func getLabelInRepoByName(e Engine, repoID int64, labelName string) (*Label, error) {
+	if len(labelName) <= 0 {
+		return nil, ErrLabelNotExist{0, repoID}
+	}
+
+	l := &Label{
+		Name:   labelName,
+		RepoID: repoID,
+	}
+	has, err := x.Get(l)
+	if err != nil {
+		return nil, err
+	} else if !has {
+		return nil, ErrLabelNotExist{0, l.RepoID}
+	}
+	return l, nil
 }
 
 // getLabelInRepoByID returns a label by ID in given repository.
@@ -129,6 +149,11 @@ func GetLabelByID(id int64) (*Label, error) {
 	return getLabelInRepoByID(x, 0, id)
 }
 
+// GetLabelInRepoByName returns a label by name in given repository.
+func GetLabelInRepoByName(repoID int64, labelName string) (*Label, error) {
+	return getLabelInRepoByName(x, repoID, labelName)
+}
+
 // GetLabelInRepoByID returns a label by ID in given repository.
 func GetLabelInRepoByID(repoID, labelID int64) (*Label, error) {
 	return getLabelInRepoByID(x, repoID, labelID)
@@ -138,13 +163,30 @@ func GetLabelInRepoByID(repoID, labelID int64) (*Label, error) {
 // it silently ignores label IDs that are not belong to the repository.
 func GetLabelsInRepoByIDs(repoID int64, labelIDs []int64) ([]*Label, error) {
 	labels := make([]*Label, 0, len(labelIDs))
-	return labels, x.Where("repo_id = ?", repoID).In("id", base.Int64sToStrings(labelIDs)).Asc("name").Find(&labels)
+	return labels, x.
+		Where("repo_id = ?", repoID).
+		In("id", labelIDs).
+		Asc("name").
+		Find(&labels)
 }
 
 // GetLabelsByRepoID returns all labels that belong to given repository by ID.
-func GetLabelsByRepoID(repoID int64) ([]*Label, error) {
+func GetLabelsByRepoID(repoID int64, sortType string) ([]*Label, error) {
 	labels := make([]*Label, 0, 10)
-	return labels, x.Where("repo_id = ?", repoID).Asc("name").Find(&labels)
+	sess := x.Where("repo_id = ?", repoID)
+
+	switch sortType {
+	case "reversealphabetically":
+		sess.Desc("name")
+	case "leastissues":
+		sess.Asc("num_issues")
+	case "mostissues":
+		sess.Desc("num_issues")
+	default:
+		sess.Asc("name")
+	}
+
+	return labels, sess.Find(&labels)
 }
 
 func getLabelsByIssueID(e Engine, issueID int64) ([]*Label, error) {
@@ -161,7 +203,11 @@ func getLabelsByIssueID(e Engine, issueID int64) ([]*Label, error) {
 	}
 
 	labels := make([]*Label, 0, len(labelIDs))
-	return labels, e.Where("id > 0").In("id", base.Int64sToStrings(labelIDs)).Asc("name").Find(&labels)
+	return labels, e.
+		Where("id > 0").
+		In("id", labelIDs).
+		Asc("name").
+		Find(&labels)
 }
 
 // GetLabelsByIssueID returns all labels that belong to given issue by ID.
@@ -197,7 +243,9 @@ func DeleteLabel(repoID, labelID int64) error {
 
 	if _, err = sess.Id(labelID).Delete(new(Label)); err != nil {
 		return err
-	} else if _, err = sess.Where("label_id = ?", labelID).Delete(new(IssueLabel)); err != nil {
+	} else if _, err = sess.
+		Where("label_id = ?", labelID).
+		Delete(new(IssueLabel)); err != nil {
 		return err
 	}
 
@@ -211,7 +259,7 @@ func DeleteLabel(repoID, labelID int64) error {
 // |___/____  >____  >____/  \___  >_______ (____  /___  /\___  >____/
 //          \/     \/            \/        \/    \/    \/     \/
 
-// IssueLabel represetns an issue-lable relation.
+// IssueLabel represents an issue-label relation.
 type IssueLabel struct {
 	ID      int64 `xorm:"pk autoincr"`
 	IssueID int64 `xorm:"UNIQUE(s)"`
@@ -293,7 +341,10 @@ func NewIssueLabels(issue *Issue, labels []*Label) (err error) {
 
 func getIssueLabels(e Engine, issueID int64) ([]*IssueLabel, error) {
 	issueLabels := make([]*IssueLabel, 0, 10)
-	return issueLabels, e.Where("issue_id=?", issueID).Asc("label_id").Find(&issueLabels)
+	return issueLabels, e.
+		Where("issue_id=?", issueID).
+		Asc("label_id").
+		Find(&issueLabels)
 }
 
 // GetIssueLabels returns all issue-label relations of given issue by ID.

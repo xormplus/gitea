@@ -1,33 +1,31 @@
-// +build go1.4
-
 // Copyright 2014 The Gogs Authors. All rights reserved.
+// Copyright 2016 The Gitea Authors. All rights reserved.
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-// Gogs (Go Git Service) is a painless self-hosted Git Service.
-package main
+// Gitea (git with a cup of tea) is a painless self-hosted Git Service.
+package main // import "code.gitea.io/gitea"
 
 import (
 	"os"
-	"runtime"
 
-	"github.com/go-gitea/gitea/cmd"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/cmd"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
 	"github.com/urfave/cli"
 )
 
 // Version holds the current Gitea version
-const Version = "0.9.99.0915"
+var Version = "1.1.0+dev"
 
 func init() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	setting.AppVer = Version
 }
 
 func main() {
 	app := cli.NewApp()
-	app.Name = "Gogs"
-	app.Usage = "Go Git Service: a painless self-hosted Git service"
+	app.Name = "Gitea"
+	app.Usage = "A painless self-hosted Git service"
 	app.Version = Version
 	app.Commands = []cli.Command{
 		cmd.CmdWeb,
@@ -38,5 +36,9 @@ func main() {
 		cmd.CmdAdmin,
 	}
 	app.Flags = append(app.Flags, []cli.Flag{}...)
-	app.Run(os.Args)
+	err := app.Run(os.Args)
+	if err != nil {
+		log.Fatal(4, "Fail to run app with %s: %v", os.Args, err)
+	}
+
 }

@@ -7,17 +7,18 @@ package repo
 import (
 	"path"
 
-	api "github.com/go-gitea/go-sdk/gitea"
+	api "code.gitea.io/sdk/gitea"
 
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/auth"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
-	"github.com/go-gitea/gitea/routers/api/v1/convert"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/auth"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/routers/api/v1/convert"
 )
 
-// https://github.com/gogits/go-gogs-client/wiki/Repositories#search-repositories
+// Search repositories via options
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories#search-repositories
 func Search(ctx *context.APIContext) {
 	opts := &models.SearchRepoOptions{
 		Keyword:  path.Base(ctx.Query("q")),
@@ -76,7 +77,8 @@ func Search(ctx *context.APIContext) {
 	})
 }
 
-// https://github.com/gogits/go-gogs-client/wiki/Repositories#list-your-repositories
+// ListMyRepos list all my repositories
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories#list-your-repositories
 func ListMyRepos(ctx *context.APIContext) {
 	ownRepos, err := models.GetUserRepositories(ctx.User.ID, true, 1, ctx.User.NumRepos)
 	if err != nil {
@@ -93,22 +95,19 @@ func ListMyRepos(ctx *context.APIContext) {
 
 	repos := make([]*api.Repository, numOwnRepos+len(accessibleRepos))
 	for i := range ownRepos {
-		repos[i] = ownRepos[i].APIFormat(&api.Permission{true, true, true})
+		repos[i] = ownRepos[i].APIFormat(models.AccessModeOwner)
 	}
 	i := numOwnRepos
 
 	for repo, access := range accessibleRepos {
-		repos[i] = repo.APIFormat(&api.Permission{
-			Admin: access >= models.AccessModeAdmin,
-			Push:  access >= models.AccessModeWrite,
-			Pull:  true,
-		})
+		repos[i] = repo.APIFormat(access)
 		i++
 	}
 
 	ctx.JSON(200, &repos)
 }
 
+// CreateUserRepo create a repository for a user
 func CreateUserRepo(ctx *context.APIContext, owner *models.User, opt api.CreateRepoOption) {
 	repo, err := models.CreateRepository(owner, models.CreateRepoOptions{
 		Name:        opt.Name,
@@ -135,10 +134,11 @@ func CreateUserRepo(ctx *context.APIContext, owner *models.User, opt api.CreateR
 		return
 	}
 
-	ctx.JSON(201, repo.APIFormat(&api.Permission{true, true, true}))
+	ctx.JSON(201, repo.APIFormat(models.AccessModeOwner))
 }
 
-// https://github.com/gogits/go-gogs-client/wiki/Repositories#create
+// Create one repository of mine
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories#create
 func Create(ctx *context.APIContext, opt api.CreateRepoOption) {
 	// Shouldn't reach this condition, but just in case.
 	if ctx.User.IsOrganization() {
@@ -148,6 +148,7 @@ func Create(ctx *context.APIContext, opt api.CreateRepoOption) {
 	CreateUserRepo(ctx, ctx.User, opt)
 }
 
+// CreateOrgRepo create one repository of the organization
 func CreateOrgRepo(ctx *context.APIContext, opt api.CreateRepoOption) {
 	org, err := models.GetOrgByName(ctx.Params(":org"))
 	if err != nil {
@@ -166,13 +167,14 @@ func CreateOrgRepo(ctx *context.APIContext, opt api.CreateRepoOption) {
 	CreateUserRepo(ctx, org, opt)
 }
 
-// https://github.com/gogits/go-gogs-client/wiki/Repositories#migrate
+// Migrate migrate remote git repository to gitea
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories#migrate
 func Migrate(ctx *context.APIContext, form auth.MigrateRepoForm) {
 	ctxUser := ctx.User
 	// Not equal means context user is an organization,
 	// or is another user/organization if current user is admin.
-	if form.Uid != ctxUser.ID {
-		org, err := models.GetUserByID(form.Uid)
+	if form.UID != ctxUser.ID {
+		org, err := models.GetUserByID(form.UID)
 		if err != nil {
 			if models.IsErrUserNotExist(err) {
 				ctx.Error(422, "", err)
@@ -235,49 +237,50 @@ func Migrate(ctx *context.APIContext, form auth.MigrateRepoForm) {
 	}
 
 	log.Trace("Repository migrated: %s/%s", ctxUser.Name, form.RepoName)
-	ctx.JSON(201, repo.APIFormat(&api.Permission{true, true, true}))
+	ctx.JSON(201, repo.APIFormat(models.AccessModeAdmin))
 }
 
-func parseOwnerAndRepo(ctx *context.APIContext) (*models.User, *models.Repository) {
-	owner, err := models.GetUserByName(ctx.Params(":username"))
+// Get one repository
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories#get
+func Get(ctx *context.APIContext) {
+	repo := ctx.Repo.Repository
+	access, err := models.AccessLevel(ctx.User, repo)
 	if err != nil {
-		if models.IsErrUserNotExist(err) {
-			ctx.Error(422, "", err)
-		} else {
-			ctx.Error(500, "GetUserByName", err)
-		}
-		return nil, nil
+		ctx.Error(500, "GetRepository", err)
+		return
 	}
+	ctx.JSON(200, repo.APIFormat(access))
+}
 
-	repo, err := models.GetRepositoryByName(owner.ID, ctx.Params(":reponame"))
+// GetByID returns a single Repository
+func GetByID(ctx *context.APIContext) {
+	repo, err := models.GetRepositoryByID(ctx.ParamsInt64(":id"))
 	if err != nil {
 		if models.IsErrRepoNotExist(err) {
 			ctx.Status(404)
 		} else {
-			ctx.Error(500, "GetRepositoryByName", err)
+			ctx.Error(500, "GetRepositoryByID", err)
 		}
-		return nil, nil
-	}
-
-	return owner, repo
-}
-
-// https://github.com/gogits/go-gogs-client/wiki/Repositories#get
-func Get(ctx *context.APIContext) {
-	_, repo := parseOwnerAndRepo(ctx)
-	if ctx.Written() {
 		return
 	}
 
-	ctx.JSON(200, repo.APIFormat(&api.Permission{true, true, true}))
+	access, err := models.AccessLevel(ctx.User, repo)
+	if err != nil {
+		ctx.Error(500, "GetRepositoryByID", err)
+		return
+	}
+	ctx.JSON(200, repo.APIFormat(access))
 }
 
-// https://github.com/gogits/go-gogs-client/wiki/Repositories#delete
+// Delete one repository
+// see https://github.com/gogits/go-gogs-client/wiki/Repositories#delete
 func Delete(ctx *context.APIContext) {
-	owner, repo := parseOwnerAndRepo(ctx)
-	if ctx.Written() {
+	if !ctx.Repo.IsAdmin() {
+		ctx.Error(403, "", "Must have admin rights")
 		return
 	}
+	owner := ctx.Repo.Owner
+	repo := ctx.Repo.Repository
 
 	if owner.IsOrganization() && !owner.IsOwnedBy(ctx.User.ID) {
 		ctx.Error(403, "", "Given user is not owner of organization.")

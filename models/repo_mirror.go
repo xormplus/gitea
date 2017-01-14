@@ -13,40 +13,44 @@ import (
 	"github.com/go-xorm/xorm"
 	"gopkg.in/ini.v1"
 
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/process"
-	"github.com/go-gitea/gitea/modules/setting"
-	"github.com/go-gitea/gitea/modules/sync"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/process"
+	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/sync"
 )
 
+// MirrorQueue holds an UniqueQueue object of the mirror
 var MirrorQueue = sync.NewUniqueQueue(setting.Repository.MirrorQueueLength)
 
 // Mirror represents mirror information of a repository.
 type Mirror struct {
-	ID          int64 `xorm:"pk autoincr"`
-	RepoID      int64
+	ID          int64       `xorm:"pk autoincr"`
+	RepoID      int64       `xorm:"INDEX"`
 	Repo        *Repository `xorm:"-"`
 	Interval    int         // Hour.
 	EnablePrune bool        `xorm:"NOT NULL DEFAULT true"`
 
 	Updated        time.Time `xorm:"-"`
-	UpdatedUnix    int64
+	UpdatedUnix    int64     `xorm:"INDEX"`
 	NextUpdate     time.Time `xorm:"-"`
-	NextUpdateUnix int64
+	NextUpdateUnix int64     `xorm:"INDEX"`
 
 	address string `xorm:"-"`
 }
 
+// BeforeInsert will be invoked by XORM before inserting a record
 func (m *Mirror) BeforeInsert() {
 	m.UpdatedUnix = time.Now().Unix()
 	m.NextUpdateUnix = m.NextUpdate.Unix()
 }
 
+// BeforeUpdate is invoked from XORM before updating this object.
 func (m *Mirror) BeforeUpdate() {
 	m.UpdatedUnix = time.Now().Unix()
 	m.NextUpdateUnix = m.NextUpdate.Unix()
 }
 
+// AfterSet is invoked from XORM after setting the value of a field of this object.
 func (m *Mirror) AfterSet(colName string, _ xorm.Cell) {
 	var err error
 	switch colName {
@@ -180,10 +184,12 @@ func updateMirror(e Engine, m *Mirror) error {
 	return err
 }
 
+// UpdateMirror updates the mirror
 func UpdateMirror(m *Mirror) error {
 	return updateMirror(x, m)
 }
 
+// DeleteMirrorByRepoID deletes a mirror by repoID
 func DeleteMirrorByRepoID(repoID int64) error {
 	_, err := x.Delete(&Mirror{RepoID: repoID})
 	return err
@@ -199,16 +205,18 @@ func MirrorUpdate() {
 
 	log.Trace("Doing: MirrorUpdate")
 
-	if err := x.Where("next_update_unix<=?", time.Now().Unix()).Iterate(new(Mirror), func(idx int, bean interface{}) error {
-		m := bean.(*Mirror)
-		if m.Repo == nil {
-			log.Error(4, "Disconnected mirror repository found: %d", m.ID)
-			return nil
-		}
+	if err := x.
+		Where("next_update_unix<=?", time.Now().Unix()).
+		Iterate(new(Mirror), func(idx int, bean interface{}) error {
+			m := bean.(*Mirror)
+			if m.Repo == nil {
+				log.Error(4, "Disconnected mirror repository found: %d", m.ID)
+				return nil
+			}
 
-		MirrorQueue.Add(m.RepoID)
-		return nil
-	}); err != nil {
+			MirrorQueue.Add(m.RepoID)
+			return nil
+		}); err != nil {
 		log.Error(4, "MirrorUpdate: %v", err)
 	}
 }
@@ -223,7 +231,7 @@ func SyncMirrors() {
 
 		m, err := GetMirrorByRepoID(com.StrTo(repoID).MustInt64())
 		if err != nil {
-			log.Error(4, "GetMirrorByRepoID [%d]: %v", repoID, err)
+			log.Error(4, "GetMirrorByRepoID [%s]: %v", repoID, err)
 			continue
 		}
 
@@ -233,12 +241,13 @@ func SyncMirrors() {
 
 		m.ScheduleNextUpdate()
 		if err = UpdateMirror(m); err != nil {
-			log.Error(4, "UpdateMirror [%d]: %v", repoID, err)
+			log.Error(4, "UpdateMirror [%s]: %v", repoID, err)
 			continue
 		}
 	}
 }
 
+// InitSyncMirrors initializes a go routine to sync the mirrors
 func InitSyncMirrors() {
 	go SyncMirrors()
 }

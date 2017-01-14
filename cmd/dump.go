@@ -1,4 +1,5 @@
 // Copyright 2014 The Gogs Authors. All rights reserved.
+// Copyright 2016 The Gitea Authors. All rights reserved.
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
@@ -10,20 +11,21 @@ import (
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"time"
 
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/setting"
 	"github.com/Unknwon/cae/zip"
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/setting"
 	"github.com/urfave/cli"
 )
 
 // CmdDump represents the available dump sub-command.
 var CmdDump = cli.Command{
 	Name:  "dump",
-	Usage: "Dump Gogs files and database",
+	Usage: "Dump Gitea files and database",
 	Description: `Dump compresses all related files and database into zip file.
-It can be used for backup and capture Gogs server image to send to maintainer`,
+It can be used for backup and capture Gitea server image to send to maintainer`,
 	Action: runDump,
 	Flags: []cli.Flag{
 		cli.StringFlag{
@@ -40,6 +42,10 @@ It can be used for backup and capture Gogs server image to send to maintainer`,
 			Value: os.TempDir(),
 			Usage: "Temporary dir path",
 		},
+		cli.StringFlag{
+			Name:  "database, d",
+			Usage: "Specify the database SQL syntax",
+		},
 	},
 }
 
@@ -48,6 +54,7 @@ func runDump(ctx *cli.Context) error {
 		setting.CustomConf = ctx.String("config")
 	}
 	setting.NewContext()
+	setting.NewServices() // cannot access session settings otherwise
 	models.LoadConfigs()
 	models.SetEngine()
 
@@ -55,14 +62,14 @@ func runDump(ctx *cli.Context) error {
 	if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
 		log.Fatalf("Path does not exist: %s", tmpDir)
 	}
-	TmpWorkDir, err := ioutil.TempDir(tmpDir, "gogs-dump-")
+	TmpWorkDir, err := ioutil.TempDir(tmpDir, "gitea-dump-")
 	if err != nil {
 		log.Fatalf("Fail to create tmp work directory: %v", err)
 	}
 	log.Printf("Creating tmp work dir: %s", TmpWorkDir)
 
-	reposDump := path.Join(TmpWorkDir, "gogs-repo.zip")
-	dbDump := path.Join(TmpWorkDir, "gogs-db.sql")
+	reposDump := path.Join(TmpWorkDir, "gitea-repo.zip")
+	dbDump := path.Join(TmpWorkDir, "gitea-db.sql")
 
 	log.Printf("Dumping local repositories...%s", setting.RepoRootPath)
 	zip.Verbose = ctx.Bool("verbose")
@@ -70,24 +77,29 @@ func runDump(ctx *cli.Context) error {
 		log.Fatalf("Fail to dump local repositories: %v", err)
 	}
 
-	log.Printf("Dumping database...")
-	if err := models.DumpDatabase(dbDump); err != nil {
+	targetDBType := ctx.String("database")
+	if len(targetDBType) > 0 && targetDBType != models.DbCfg.Type {
+		log.Printf("Dumping database %s => %s...", models.DbCfg.Type, targetDBType)
+	} else {
+		log.Printf("Dumping database...")
+	}
+
+	if err := models.DumpDatabase(dbDump, targetDBType); err != nil {
 		log.Fatalf("Fail to dump database: %v", err)
 	}
 
-	fileName := fmt.Sprintf("gogs-dump-%d.zip", time.Now().Unix())
+	fileName := fmt.Sprintf("gitea-dump-%d.zip", time.Now().Unix())
 	log.Printf("Packing dump files...")
 	z, err := zip.Create(fileName)
 	if err != nil {
-		os.Remove(fileName)
 		log.Fatalf("Fail to create %s: %v", fileName, err)
 	}
 
-	if err := z.AddFile("gogs-repo.zip", reposDump); err != nil {
-		log.Fatalf("Fail to include gogs-repo.zip: %v", err)
+	if err := z.AddFile("gitea-repo.zip", reposDump); err != nil {
+		log.Fatalf("Fail to include gitea-repo.zip: %v", err)
 	}
-	if err := z.AddFile("gogs-db.sql", dbDump); err != nil {
-		log.Fatalf("Fail to include gogs-db.sql: %v", err)
+	if err := z.AddFile("gitea-db.sql", dbDump); err != nil {
+		log.Fatalf("Fail to include gitea-db.sql: %v", err)
 	}
 	customDir, err := os.Stat(setting.CustomPath)
 	if err == nil && customDir.IsDir() {
@@ -97,12 +109,26 @@ func runDump(ctx *cli.Context) error {
 	} else {
 		log.Printf("Custom dir %s doesn't exist, skipped", setting.CustomPath)
 	}
+
+	log.Printf("Packing data directory...%s", setting.AppDataPath)
+	var sessionAbsPath string
+	if setting.SessionConfig.Provider == "file" {
+		if len(setting.SessionConfig.ProviderConfig) == 0 {
+			setting.SessionConfig.ProviderConfig = "data/sessions"
+		}
+		sessionAbsPath, _ = filepath.Abs(setting.SessionConfig.ProviderConfig)
+	}
+
+	if err := zipAddDirectoryExclude(z, "data", setting.AppDataPath, sessionAbsPath); err != nil {
+		log.Fatalf("Fail to include data directory: %v", err)
+	}
+
 	if err := z.AddDir("log", setting.LogRootPath); err != nil {
 		log.Fatalf("Fail to include log: %v", err)
 	}
 	// FIXME: SSH key file.
 	if err = z.Close(); err != nil {
-		os.Remove(fileName)
+		_ = os.Remove(fileName)
 		log.Fatalf("Fail to save %s: %v", fileName, err)
 	}
 
@@ -111,8 +137,48 @@ func runDump(ctx *cli.Context) error {
 	}
 
 	log.Printf("Removing tmp work dir: %s", TmpWorkDir)
-	os.RemoveAll(TmpWorkDir)
+
+	if err := os.RemoveAll(TmpWorkDir); err != nil {
+		log.Fatalf("Fail to remove %s: %v", TmpWorkDir, err)
+	}
 	log.Printf("Finish dumping in file %s", fileName)
 
+	return nil
+}
+
+// zipAddDirectoryExclude zips absPath to specified zipPath inside z excluding excludeAbsPath
+func zipAddDirectoryExclude(zip *zip.ZipArchive, zipPath, absPath string, excludeAbsPath string) error {
+	absPath, err := filepath.Abs(absPath)
+	if err != nil {
+		return err
+	}
+	dir, err := os.Open(absPath)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+
+	zip.AddEmptyDir(zipPath)
+
+	files, err := dir.Readdir(0)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		currentAbsPath := path.Join(absPath, file.Name())
+		currentZipPath := path.Join(zipPath, file.Name())
+		if file.IsDir() {
+			if currentAbsPath != excludeAbsPath {
+				if err = zipAddDirectoryExclude(zip, currentZipPath, currentAbsPath, excludeAbsPath); err != nil {
+					return err
+				}
+			}
+
+		} else {
+			if err = zip.AddFile(currentZipPath, currentAbsPath); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }

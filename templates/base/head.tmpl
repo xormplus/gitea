@@ -3,9 +3,9 @@
 <head data-suburl="{{AppSubUrl}}">
 	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 	<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
-	<meta name="author" content="{{if .Repository}}{{.Owner.Name}}{{else}}Gogs - Go Git Service{{end}}" />
-	<meta name="description" content="{{if .Repository}}{{.Repository.Name}}{{if .Repository.Description}} - {{.Repository.Description}}{{end}}{{else}}Gogs (Go Git Service) is a painless self-hosted Git service written in Go{{end}}" />
-	<meta name="keywords" content="go, git, self-hosted, gogs">
+	<meta name="author" content="{{if .Repository}}{{.Owner.Name}}{{else}}Gitea - Git with a cup of tea{{end}}" />
+	<meta name="description" content="{{if .Repository}}{{.Repository.Name}}{{if .Repository.Description}} - {{.Repository.Description}}{{end}}{{else}}Gitea (Git with a cup of tea) is a painless self-hosted Git service written in Go{{end}}" />
+	<meta name="keywords" content="go, git, self-hosted, gitea">
 	<meta name="referrer" content="no-referrer" />
 	<meta name="_csrf" content="{{.CsrfToken}}" />
 	<meta name="_suburl" content="{{AppSubUrl}}" />
@@ -29,6 +29,13 @@
 		<script>
 			CodeMirror.modeURL =  "{{AppSubUrl}}/plugins/codemirror-5.17.0/mode/%N/%N.js";
 		</script>
+	{{end}}
+
+	{{if .RequireGitGraph}}
+	<!-- graph -->
+	<script src="{{AppSubUrl}}/js/libs/gitgraph.js"></script>
+	<script src="{{AppSubUrl}}/js/draw.js"></script>
+	<link rel="stylesheet" href="{{AppSubUrl}}/css/gitgraph.css">
 	{{end}}
 
 	<!-- Stylesheet -->
@@ -75,6 +82,18 @@
 
 								{{if .IsSigned}}
 									<div class="right menu">
+										<a href="{{$.AppSubUrl}}/notifications" class="ui head link jump item poping up" data-content='{{.i18n.Tr "notifications"}}' data-variation="tiny inverted">
+											<span class="text">
+												<i class="octicon octicon-inbox"><span class="sr-only">{{.i18n.Tr "notifications"}}</span></i>
+
+												{{if .NotificationUnreadCount}}
+													<span class="ui red label">
+														{{.NotificationUnreadCount}}
+													</span>
+												{{end}}
+											</span>
+										</a>
+
 										<div class="ui dropdown head link jump item poping up" data-content="{{.i18n.Tr "create_new"}}" data-variation="tiny inverted">
 											<span class="text">
 												<i class="octicon octicon-plus"><span class="sr-only">{{.i18n.Tr "create_new"}}</span></i>
@@ -87,9 +106,11 @@
 												<a class="item" href="{{AppSubUrl}}/repo/migrate">
 													<i class="octicon octicon-repo-clone"></i> {{.i18n.Tr "new_migrate"}}
 												</a>
+												{{if .SignedUser.CanCreateOrganization}}
 												<a class="item" href="{{AppSubUrl}}/org/create">
 													<i class="octicon octicon-organization"></i> {{.i18n.Tr "new_org"}}
 												</a>
+												{{end}}
 											</div><!-- end content create new menu -->
 										</div><!-- end dropdown menu create new -->
 
@@ -109,11 +130,15 @@
 													<i class="octicon octicon-person"></i>
 													{{.i18n.Tr "your_profile"}}<!-- Your profile -->
 												</a>
+												<a class="item" href="{{AppSubUrl}}/{{.SignedUser.Name}}?tab=stars">
+													<i class="octicon octicon-star"></i>
+													{{.i18n.Tr "your_starred"}}
+												</a>
 												<a class="{{if .PageIsUserSettings}}active{{end}} item" href="{{AppSubUrl}}/user/settings">
 													<i class="octicon octicon-settings"></i>
 													{{.i18n.Tr "your_settings"}}<!-- Your settings -->
 												</a>
-												<a class="item" target="_blank" href="https://gogs.io/docs" rel="noreferrer">
+												<a class="item" target="_blank" rel="noopener" href="https://docs.gitea.io" rel="noreferrer">
 													<i class="octicon octicon-question"></i>
 													{{.i18n.Tr "help"}}<!-- Help -->
 												</a>
@@ -137,7 +162,7 @@
 
 								{{else}}
 
-									<a class="item" target="_blank" href="https://gogs.io/docs" rel="noreferrer">{{.i18n.Tr "help"}}</a>
+									<a class="item" target="_blank" rel="noopener" href="https://docs.gitea.io" rel="noreferrer">{{.i18n.Tr "help"}}</a>
 									<div class="right menu">
 										{{if .ShowRegistrationButton}}
 											<a class="item{{if .PageIsSignUp}} active{{end}}" href="{{AppSubUrl}}/user/sign_up">

@@ -5,15 +5,16 @@
 package admin
 
 import (
-	api "github.com/go-gitea/go-sdk/gitea"
+	api "code.gitea.io/sdk/gitea"
 
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/routers/api/v1/convert"
-	"github.com/go-gitea/gitea/routers/api/v1/user"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/routers/api/v1/convert"
+	"code.gitea.io/gitea/routers/api/v1/user"
 )
 
-// https://github.com/gogits/go-gogs-client/wiki/Administration-Organizations#create-a-new-organization
+// CreateOrg api for create organization
+// see https://github.com/gogits/go-gogs-client/wiki/Administration-Organizations#create-a-new-organization
 func CreateOrg(ctx *context.APIContext, form api.CreateOrgOption) {
 	u := user.GetUserByParams(ctx)
 	if ctx.Written() {

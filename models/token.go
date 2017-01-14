@@ -10,7 +10,7 @@ import (
 	"github.com/go-xorm/xorm"
 	gouuid "github.com/satori/go.uuid"
 
-	"github.com/go-gitea/gitea/modules/base"
+	"code.gitea.io/gitea/modules/base"
 )
 
 // AccessToken represents a personal access token.
@@ -21,21 +21,24 @@ type AccessToken struct {
 	Sha1 string `xorm:"UNIQUE VARCHAR(40)"`
 
 	Created           time.Time `xorm:"-"`
-	CreatedUnix       int64
+	CreatedUnix       int64     `xorm:"INDEX"`
 	Updated           time.Time `xorm:"-"` // Note: Updated must below Created for AfterSet.
-	UpdatedUnix       int64
-	HasRecentActivity bool `xorm:"-"`
-	HasUsed           bool `xorm:"-"`
+	UpdatedUnix       int64     `xorm:"INDEX"`
+	HasRecentActivity bool      `xorm:"-"`
+	HasUsed           bool      `xorm:"-"`
 }
 
+// BeforeInsert will be invoked by XORM before inserting a record representing this object.
 func (t *AccessToken) BeforeInsert() {
 	t.CreatedUnix = time.Now().Unix()
 }
 
+// BeforeUpdate is invoked from XORM before updating this object.
 func (t *AccessToken) BeforeUpdate() {
 	t.UpdatedUnix = time.Now().Unix()
 }
 
+// AfterSet is invoked from XORM after setting the value of a field of this object.
 func (t *AccessToken) AfterSet(colName string, _ xorm.Cell) {
 	switch colName {
 	case "created_unix":
@@ -72,7 +75,10 @@ func GetAccessTokenBySHA(sha string) (*AccessToken, error) {
 // ListAccessTokens returns a list of access tokens belongs to given user.
 func ListAccessTokens(uid int64) ([]*AccessToken, error) {
 	tokens := make([]*AccessToken, 0, 5)
-	return tokens, x.Where("uid=?", uid).Desc("id").Find(&tokens)
+	return tokens, x.
+		Where("uid=?", uid).
+		Desc("id").
+		Find(&tokens)
 }
 
 // UpdateAccessToken updates information of access token.
@@ -82,7 +88,14 @@ func UpdateAccessToken(t *AccessToken) error {
 }
 
 // DeleteAccessTokenByID deletes access token by given ID.
-func DeleteAccessTokenByID(id int64) error {
-	_, err := x.Id(id).Delete(new(AccessToken))
-	return err
+func DeleteAccessTokenByID(id, userID int64) error {
+	cnt, err := x.Id(id).Delete(&AccessToken{
+		UID: userID,
+	})
+	if err != nil {
+		return err
+	} else if cnt != 1 {
+		return ErrAccessTokenNotExist{}
+	}
+	return nil
 }

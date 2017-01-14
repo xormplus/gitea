@@ -5,9 +5,10 @@
 package context
 
 import (
-	"github.com/go-gitea/gitea/models"
+	"code.gitea.io/gitea/models"
 )
 
+// APIOrganization contains organization and team
 type APIOrganization struct {
 	Organization *models.User
 	Team         *models.Team

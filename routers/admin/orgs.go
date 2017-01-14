@@ -5,17 +5,18 @@
 package admin
 
 import (
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/modules/setting"
-	"github.com/go-gitea/gitea/routers"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/routers"
 )
 
 const (
-	ORGS base.TplName = "admin/org/list"
+	tplOrgs base.TplName = "admin/org/list"
 )
 
+// Organizations show all the organizations
 func Organizations(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("admin.organizations")
 	ctx.Data["PageIsAdmin"] = true
@@ -26,7 +27,6 @@ func Organizations(ctx *context.Context) {
 		Counter:  models.CountOrganizations,
 		Ranger:   models.Organizations,
 		PageSize: setting.UI.Admin.OrgPagingNum,
-		OrderBy:  "id ASC",
-		TplName:  ORGS,
+		TplName:  tplOrgs,
 	})
 }

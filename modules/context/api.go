@@ -8,13 +8,16 @@ import (
 	"fmt"
 	"strings"
 
+	"code.gitea.io/git"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
 	"github.com/Unknwon/paginater"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
 	macaron "gopkg.in/macaron.v1"
 )
 
+// APIContext is a specific macaron context for API service
 type APIContext struct {
 	*Context
 	Org *APIOrganization
@@ -45,16 +48,16 @@ func (ctx *APIContext) SetLinkHeader(total, pageSize int) {
 	page := paginater.New(total, pageSize, ctx.QueryInt("page"), 0)
 	links := make([]string, 0, 4)
 	if page.HasNext() {
-		links = append(links, fmt.Sprintf("<%s%s?page=%d>; rel=\"next\"", setting.AppUrl, ctx.Req.URL.Path[1:], page.Next()))
+		links = append(links, fmt.Sprintf("<%s%s?page=%d>; rel=\"next\"", setting.AppURL, ctx.Req.URL.Path[1:], page.Next()))
 	}
 	if !page.IsLast() {
-		links = append(links, fmt.Sprintf("<%s%s?page=%d>; rel=\"last\"", setting.AppUrl, ctx.Req.URL.Path[1:], page.TotalPages()))
+		links = append(links, fmt.Sprintf("<%s%s?page=%d>; rel=\"last\"", setting.AppURL, ctx.Req.URL.Path[1:], page.TotalPages()))
 	}
 	if !page.IsFirst() {
-		links = append(links, fmt.Sprintf("<%s%s?page=1>; rel=\"first\"", setting.AppUrl, ctx.Req.URL.Path[1:]))
+		links = append(links, fmt.Sprintf("<%s%s?page=1>; rel=\"first\"", setting.AppURL, ctx.Req.URL.Path[1:]))
 	}
 	if page.HasPrevious() {
-		links = append(links, fmt.Sprintf("<%s%s?page=%d>; rel=\"prev\"", setting.AppUrl, ctx.Req.URL.Path[1:], page.Previous()))
+		links = append(links, fmt.Sprintf("<%s%s?page=%d>; rel=\"prev\"", setting.AppURL, ctx.Req.URL.Path[1:], page.Previous()))
 	}
 
 	if len(links) > 0 {
@@ -62,11 +65,33 @@ func (ctx *APIContext) SetLinkHeader(total, pageSize int) {
 	}
 }
 
+// APIContexter returns apicontext as macaron middleware
 func APIContexter() macaron.Handler {
 	return func(c *Context) {
 		ctx := &APIContext{
 			Context: c,
 		}
 		c.Map(ctx)
+	}
+}
+
+// ReferencesGitRepo injects the GitRepo into the Context
+func ReferencesGitRepo() macaron.Handler {
+	return func(ctx *APIContext) {
+		// Empty repository does not have reference information.
+		if ctx.Repo.Repository.IsBare {
+			return
+		}
+
+		// For API calls.
+		if ctx.Repo.GitRepo == nil {
+			repoPath := models.RepoPath(ctx.Repo.Owner.Name, ctx.Repo.Repository.Name)
+			gitRepo, err := git.OpenRepository(repoPath)
+			if err != nil {
+				ctx.Error(500, "RepoRef Invalid repo "+repoPath, err)
+				return
+			}
+			ctx.Repo.GitRepo = gitRepo
+		}
 	}
 }

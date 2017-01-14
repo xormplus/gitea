@@ -5,14 +5,15 @@
 package admin
 
 import (
-	api "github.com/go-gitea/go-sdk/gitea"
+	api "code.gitea.io/sdk/gitea"
 
-	"github.com/go-gitea/gitea/modules/context"
-	"github.com/go-gitea/gitea/routers/api/v1/repo"
-	"github.com/go-gitea/gitea/routers/api/v1/user"
+	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/routers/api/v1/repo"
+	"code.gitea.io/gitea/routers/api/v1/user"
 )
 
-// https://github.com/gogits/go-gogs-client/wiki/Administration-Repositories#create-a-new-repository
+// CreateRepo api for creating a repository
+// see https://github.com/gogits/go-gogs-client/wiki/Administration-Repositories#create-a-new-repository
 func CreateRepo(ctx *context.APIContext, form api.CreateRepoOption) {
 	owner := user.GetUserByParams(ctx)
 	if ctx.Written() {

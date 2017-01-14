@@ -6,17 +6,18 @@ package context
 
 import (
 	"fmt"
+	"html"
 	"html/template"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/go-gitea/gitea/models"
-	"github.com/go-gitea/gitea/modules/auth"
-	"github.com/go-gitea/gitea/modules/base"
-	"github.com/go-gitea/gitea/modules/log"
-	"github.com/go-gitea/gitea/modules/setting"
+	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/auth"
+	"code.gitea.io/gitea/modules/base"
+	"code.gitea.io/gitea/modules/log"
+	"code.gitea.io/gitea/modules/setting"
 	"github.com/go-macaron/cache"
 	"github.com/go-macaron/csrf"
 	"github.com/go-macaron/i18n"
@@ -40,8 +41,8 @@ type Context struct {
 	Org  *Organization
 }
 
-// HasError returns true if error occurs in form validation.
-func (ctx *Context) HasApiError() bool {
+// HasAPIError returns true if error occurs in form validation.
+func (ctx *Context) HasAPIError() bool {
 	hasErr, ok := ctx.Data["HasError"]
 	if !ok {
 		return false
@@ -49,6 +50,7 @@ func (ctx *Context) HasApiError() bool {
 	return hasErr.(bool)
 }
 
+// GetErrMsg returns error message
 func (ctx *Context) GetErrMsg() string {
 	return ctx.Data["ErrorMsg"].(string)
 }
@@ -116,6 +118,7 @@ func (ctx *Context) NotFoundOrServerError(title string, errck func(error) bool, 
 	ctx.Handle(500, title, err)
 }
 
+// HandleText handles HTTP status code
 func (ctx *Context) HandleText(status int, title string) {
 	if (status/100 == 4) || (status/100 == 5) {
 		log.Error(4, "%s", title)
@@ -123,6 +126,7 @@ func (ctx *Context) HandleText(status int, title string) {
 	ctx.PlainText(status, []byte(title))
 }
 
+// ServeContent serves content to http request
 func (ctx *Context) ServeContent(name string, r io.ReadSeeker, params ...interface{}) {
 	modtime := time.Now()
 	for _, p := range params {
@@ -156,7 +160,7 @@ func Contexter() macaron.Handler {
 			Org: &Organization{},
 		}
 		// Compute current URL for real-time change language.
-		ctx.Data["Link"] = setting.AppSubUrl + strings.TrimSuffix(ctx.Req.URL.Path, "/")
+		ctx.Data["Link"] = setting.AppSubURL + strings.TrimSuffix(ctx.Req.URL.Path, "/")
 
 		ctx.Data["PageStartTime"] = time.Now()
 
@@ -183,8 +187,10 @@ func Contexter() macaron.Handler {
 			}
 		}
 
-		ctx.Data["CsrfToken"] = x.GetToken()
-		ctx.Data["CsrfTokenHtml"] = template.HTML(`<input type="hidden" name="_csrf" value="` + x.GetToken() + `">`)
+		ctx.Resp.Header().Set(`X-Frame-Options`, `SAMEORIGIN`)
+
+		ctx.Data["CsrfToken"] = html.EscapeString(x.GetToken())
+		ctx.Data["CsrfTokenHtml"] = template.HTML(`<input type="hidden" name="_csrf" value="` + ctx.Data["CsrfToken"].(string) + `">`)
 		log.Debug("Session ID: %s", sess.ID())
 		log.Debug("CSRF Token: %v", ctx.Data["CsrfToken"])
 
